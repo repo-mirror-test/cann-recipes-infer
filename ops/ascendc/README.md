@@ -1,6 +1,6 @@
 ## 概述
 
-此项目是基于昇腾Atlas A3的融合算子库，当前项目中包括[SparseFlashAttention](./docs/custom-npu_sparse_flash_attention.md)和[LightningIndexer](./docs/custom-npu_lightning_indexer.md)两个算子。
+此项目是基于昇腾Atlas A3的融合算子库，当前项目中包括[SparseFlashAttention](./docs/custom-npu_sparse_flash_attention.md)、[LightningIndexer](./docs/custom-npu_lightning_indexer.md)和[LightningIndexerQuant](./docs/custom-npu_lightning_indexer_quant.md)三个算子。
 
 ## 目录结构说明
 
@@ -15,6 +15,9 @@
   |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
   |   |   ├── op_kernel                         # 算子Kernel目录
   |   ├── lightning_indexer                     # 推理LightningIndexer（简称li）算子示例代码
+  |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
+  |   |   ├── op_kernel                         # 算子Kernel目录
+  |   ├── lightning_indexer_quant               # 推理LightningIndexerQuant（简称liq）算子示例代码
   |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
   |   |   ├── op_kernel                         # 算子Kernel目录
   |
@@ -136,5 +139,6 @@ examples用例运行命令如下：
   ```shell
   cd /home/code/cann-recipes-infer/ops/ascendc/examples
   python3 test_npu_lightning_indexer.py
+  python3 test_npu_lightning_indexer_quant.py
   python3 test_npu_sparse_flash_attention.py   
   ```
