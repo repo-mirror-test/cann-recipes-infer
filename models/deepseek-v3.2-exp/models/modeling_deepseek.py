@@ -1577,10 +1577,11 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         tng_config.experimental_config.tiling_schedule_optimize = True
         tng_config.experimental_config.topology_sorting_strategy = "StableRDFS"
         case_name = "compile_cache/" + os.getenv("CASE_NAME")
-        if self.is_mtp:
-            case_name += "_spec"
         cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), case_name)
-        cached_decode = tng.inference.cache_compile(self.main_decode, cache_dir=cache_dir, config=tng_config,
+        cache_model = self.main_decode
+        if self.is_mtp:
+            cache_model = self.main_decode_mtp
+        cached_decode = tng.inference.cache_compile(cache_model, cache_dir=cache_dir, config=tng_config,
                                                     dynamic=False, fullgraph=True, ge_cache=True)
         return cached_decode
 
@@ -1786,6 +1787,16 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         return logits, prev_hidden_states
 
     def main_decode(
+        self,
+        **kwargs
+    ):
+        logits, prev_hidden_states = self.forward(
+            is_prefill=False,
+            **kwargs
+        )
+        return logits, prev_hidden_states
+
+    def main_decode_mtp(
         self,
         **kwargs
     ):
