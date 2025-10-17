@@ -238,26 +238,38 @@ class Infer(nn.Module):
             cur_accepted_hidden = main_hidden[j, :cur_len, :].unsqueeze(0) # B,S,H
             mtp_prev_hid = torch.cat([last_step_hidden[j], cur_accepted_hidden], dim=1)[:, -self.spec_len:, :]
             mtp_prev_hid_tmp.append(mtp_prev_hid)
-            input_dict_main['prev_hidden_states'].append(cur_accepted_hidden)
+            input_dict_main['prev_hidden_states'].append(mtp_prev_hid)
         input_dict_mtp['prev_hidden_states'] = torch.cat(mtp_prev_hid_tmp, dim=0)
 
         return input_dict_main, input_dict_mtp
 
     def mtp_post_process(self, input_dict_mtp, cycle_idx, warm_up):
         # mtp model
-        for _ in range(self.next_n):
+        past_key_values_bak = input_dict_mtp.get("past_key_values")
+        past_key_values_indexer_bak = input_dict_mtp.get("past_key_values_indexer")
+        for next_index in range(self.next_n):
             model_inputs = self.model_input_prepare(self.mtp_model.model, input_dict_mtp)
             outputs, prev_hidden_states, infer_time_spec = self.inference(self.mtp_model, model_inputs,
                                                                           is_prefill=input_dict_mtp['is_prefill'],
                                                                           cycle_idx=cycle_idx,
                                                                           warm_up=warm_up,
                                                                           prefix='[MTP]')
-            # mtp model output process
-            input_dict_mtp = self.mtp_model_output_process(model_inputs, input_dict_mtp,
-                                                            outputs, prev_hidden_states)
-
+            if next_index < self.next_n - 1:
+                # mtp model output process
+                past_key_values_cur = (past_key_values_bak[next_index],)
+                past_key_values_indexer_cur = (past_key_values_indexer_bak[next_index],)
+                input_dict_mtp = self.mtp_model_output_process_continue(model_inputs, input_dict_mtp,
+                                                                    outputs, prev_hidden_states,
+                                                                    past_key_values_cur, past_key_values_indexer_cur)
+            else:
+                # mtp model output process
+                input_dict_mtp = self.mtp_model_output_process(model_inputs, input_dict_mtp,
+                                                                outputs, prev_hidden_states)
+                
+        input_dict_mtp["past_key_values"] = past_key_values_bak
+        input_dict_mtp['past_key_values_indexer'] = past_key_values_indexer_bak
         return input_dict_mtp, infer_time_spec
-
+    
     def mtp_model_output_process(self, model_inputs, input_dict, outputs, prev_hidden_states):
         if input_dict['is_prefill']:
             # kv_len increase by one after prefill
@@ -287,7 +299,7 @@ class Infer(nn.Module):
         # for next_n > 1, need to pad inputs for the first decode step
         if (next_tokens.shape[1] < self.spec_len) and (self.next_n > 1):
             pad_len = self.spec_len - next_tokens.shape[1]
-            next_tokens = torch.cat([input_dict['generate_ids'][:, -pad_len:], next_tokens], dim=-1)
+            next_tokens = torch.cat([input_dict['input_ids'][:, -pad_len:], next_tokens], dim=-1)
             input_dict['kv_len'] -= pad_len
         input_dict['input_ids'] = next_tokens
 
@@ -295,6 +307,26 @@ class Infer(nn.Module):
         if input_dict['is_prefill']:
             input_dict['kv_len_cached'] = kv_len
             input_dict['is_prefill'] = False
+
+        return input_dict
+    
+    def mtp_model_output_process_continue(self, model_inputs, input_dict, outputs, prev_hidden_states, 
+                                      past_key_values_cur, past_key_values_indexer_cur):
+
+        next_tokens = torch.argmax(outputs, dim=-1)
+        spec_token = next_tokens[:, -1:]
+
+        # keep record of spec tokens for main model verification
+        if input_dict['spec_tokens'] is None:
+            input_dict['spec_tokens'] = spec_token
+        else:
+            input_dict['spec_tokens'] = torch.cat([input_dict['spec_tokens'], spec_token], dim=-1)
+
+        input_dict["past_key_values"] = past_key_values_cur
+        input_dict['past_key_values_indexer'] = past_key_values_indexer_cur
+        input_dict['prev_hidden_states'] = torch.cat([input_dict['prev_hidden_states'], 
+                                                      prev_hidden_states[:, -1:, :]], dim=1)[:,-prev_hidden_states.shape[1]:,:]
+        input_dict['input_ids'] = torch.cat([input_dict['input_ids'], spec_token], dim=-1)[:, 1:]
 
         return input_dict
 

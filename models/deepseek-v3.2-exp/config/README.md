@@ -18,6 +18,7 @@
 - prefill_mini_batch_size: 0      # mini_batch_size for prefill stage. 
 - perfect_eplb: False             # whether enable, test uniform scenario of MoE experts
 - enable_auto_split_weight: True  # whether enable auto-split weight. support [False, True]
+- next_n: 1                       # steps using multi-token prediction. support [0, 1, 2, 3]
 
 ## Data Config
 - dataset: "default"  # support ["default" "InfiniteBench" "LongBench"]

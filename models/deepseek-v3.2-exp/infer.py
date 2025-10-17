@@ -115,8 +115,8 @@ def check_model_settings(world_size, runner_settings):
     block_size = runner_settings.get("model_config").get("pa_block_size", 128)
     if pa_max_length % block_size != 0:
         raise ValueError(f"{pa_max_length=} should be a multiple of {block_size=}")
-    if next_n > 1:
-        raise ValueError(f"{next_n=} must equal or smaller than 1")
+    if next_n > 3:
+        raise ValueError(f"{next_n=} must equal or smaller than 3")
     if prefill_mini_batch_size > 0:
         batch_size = runner_settings.get("data_config").get("batch_size", 1)
         if prefill_mini_batch_size > batch_size or batch_size % prefill_mini_batch_size != 0:
