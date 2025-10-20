@@ -266,7 +266,7 @@ class DeepseekV3MoE(nn.Module):
         bsz, seq_len, h = hidden_states.shape
         # compute gating score
         hidden_states = hidden_states.view(-1, h)
-        logits = self.gate(hidden_states)
+        logits = F.linear(hidden_states, self.gate.weight)
 
         # use fused kernel, currently only support 256 or 384 experts
         if self.topk_method == "noaux_tc" and self.n_routed_experts in [256, 384]:
