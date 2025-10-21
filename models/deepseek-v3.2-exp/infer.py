@@ -71,9 +71,9 @@ def check_parallel_settings(world_size, runner_settings):
     embed_tp_size = runner_settings.get("parallel_config").get("embed_tp_size")
     lmhead_tp_size = runner_settings.get("parallel_config").get("lmhead_tp_size", embed_tp_size)
     cp_size = runner_settings.get("parallel_config").get("cp_size", 1)
+    dense_tp_size = runner_settings.get("parallel_config").get("dense_tp_size", 1)
     attn_dp_size = world_size // attn_tp_size
     batch_size = runner_settings.get("data_config").get("batch_size", 1)
-    prefill_mini_batch_size = runner_settings.get("model_config").get("prefill_mini_batch_size", 0)
 
     if world_size <= 0:
         raise ValueError(f"{world_size=} must greater than 0")
@@ -95,6 +95,8 @@ def check_parallel_settings(world_size, runner_settings):
         raise ValueError(f"{batch_size=} is not divisible by {attn_dp_size=}")
     if cp_size > 1 and world_size != cp_size:
         raise ValueError(f"when cp enabled, {world_size=} should equal to {cp_size=}")
+    if world_size % dense_tp_size != 0:
+        raise ValueError(f"{world_size=} is not divisible by {dense_tp_size=}")
 
 
 def check_model_settings(world_size, runner_settings):

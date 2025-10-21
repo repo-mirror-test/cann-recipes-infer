@@ -27,7 +27,7 @@ parallel_config:
   cp_size: 128
   attn_tp_size: 1
   oproj_tp_size: 8    # only support when attn_tp_size == 1
-  dense_tp_size: 1
+  dense_tp_size: 4
   moe_tp_size: 1
   embed_tp_size: 16
   lmhead_tp_size: 16

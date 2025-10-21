@@ -98,19 +98,19 @@ class DeepseekV3DenseMLP(nn.Module):
 
     def forward(self, x, is_prefill=False):
         # input_DP + attention_TP + moe_EP
-        if is_prefill and self.dense_tp_size > 1 and self.moe_ep_size > 1:
+        if self.dense_tp_size > 1 and self.moe_ep_size > 1:
             bsz, q_len, _ = x.size()
-            x_output = torch.empty([bsz * q_len * self.dense_tp_size, self.hidden_size], \
+            x_output = torch.empty([bsz * self.dense_tp_size, q_len, self.hidden_size], \
                                    dtype=x.dtype, device="npu")
             dist.all_gather_into_tensor(x_output, x, group=self.hccl_comm_dict.get("dense_tp_group", None))
-            x = x_output.view(bsz, -1, self.hidden_size)
+            x = x_output
 
         if self.mm_quant_mode == "A8W8":
             down_proj = self.forward_a8w8(x)
         else:
             down_proj = self.forward_normal(x)
 
-        if is_prefill and self.dense_tp_size > 1 and self.moe_ep_size > 1:
+        if self.dense_tp_size > 1 and self.moe_ep_size > 1:
             mlp_res = down_proj.new_empty(bsz, q_len, down_proj.shape[-1])
             dist.reduce_scatter_tensor(mlp_res, down_proj, group=self.hccl_comm_dict.get("dense_tp_group", None))
             down_proj = mlp_res
