@@ -34,12 +34,15 @@ class Infer(nn.Module):
 
         self.main_model = main_model
         self.mtp_model = mtp_model
+        self.kv_cache_c8 = main_model.model.config.quant_config.kv_cache_c8 \
+            if main_model.model.config.quant_config is not None else False
 
         self.mini_batch = self.main_model.prefill_mini_batch_size \
             if self.main_model.prefill_mini_batch_size > 0 else self.main_model.batch_size_per_rank
 
         self.tmp_kv = None
         self.tmp_indexer_kv = None
+        self.tmp_indexer_ks = None
 
     def inference(self, model_runner, model_inputs, cycle_idx=None, is_prefill=False, warm_up=False, prefix=''):
         if not warm_up:
@@ -85,6 +88,7 @@ class Infer(nn.Module):
         attention_mask = input_dict.get("attention_mask")
         past_key_values = input_dict.get("past_key_values")
         past_key_values_indexer = input_dict.get("past_key_values_indexer")
+        past_key_scales_indexer = input_dict.get("past_key_scales_indexer")
 
         is_prefill = input_dict.get("is_prefill")
         kv_len = input_dict.get("kv_len")
@@ -96,6 +100,7 @@ class Infer(nn.Module):
             attention_mask=attention_mask,
             past_key_values=past_key_values,
             past_key_values_indexer=past_key_values_indexer,
+            past_key_scales_indexer=past_key_scales_indexer,
             prev_hidden_states=prev_hidden_states,
             is_prefill=is_prefill,
             kv_len=kv_len,
@@ -116,7 +121,9 @@ class Infer(nn.Module):
         past_key_values = model_inputs.get("past_key_values")
         input_dict["past_key_values"] = past_key_values
         past_key_values_indexer = model_inputs.get("past_key_values_indexer")
+        past_key_scales_indexer = model_inputs.get("past_key_scales_indexer")
         input_dict["past_key_values_indexer"] = past_key_values_indexer
+        input_dict["past_key_scales_indexer"] = past_key_scales_indexer
         next_tokens = torch.argmax(outputs, dim=-1)
         input_dict['input_ids'] = next_tokens
         input_dict['generate_ids'] = torch.cat([input_dict['generate_ids'], next_tokens], dim=-1)
@@ -190,8 +197,9 @@ class Infer(nn.Module):
         past_key_values = model_inputs.get("past_key_values")
         input_dict_main['past_key_values'] = past_key_values
         past_key_values_indexer = model_inputs.get("past_key_values_indexer")
+        past_key_scales_indexer = model_inputs.get("past_key_scales_indexer")
         input_dict_main['past_key_values_indexer'] = past_key_values_indexer
-
+        input_dict_main['past_key_scales_indexer'] = past_key_scales_indexer
         input_dict_main['generate_ids'] = torch.cat([input_dict_main['generate_ids'], main_next_tokens], dim=-1)
         input_dict_main['prev_hidden_states'] = torch.chunk(main_hidden, chunks=batch_size, dim=0)
 
@@ -291,7 +299,9 @@ class Infer(nn.Module):
         past_key_values = model_inputs.get("past_key_values")
         input_dict["past_key_values"] = past_key_values
         past_key_values_indexer = model_inputs.get("past_key_values_indexer")
+        past_key_scales_indexer = model_inputs.get("past_key_scales_indexer")
         input_dict['past_key_values_indexer'] = past_key_values_indexer
+        input_dict['past_key_scales_indexer'] = past_key_scales_indexer
         input_dict['kv_len'] = kv_len
         input_dict['input_lens'] = input_dict['input_lens'] + 1
         input_dict['prev_hidden_states'] = prev_hidden_states[:, -self.spec_len:, :]
@@ -358,14 +368,17 @@ class Infer(nn.Module):
                 num_hidden_layers=self.next_n if model.is_mtp else model.config.num_hidden_layers
             )
         
-        if input_dict['past_key_values_indexer'] is None:
-            input_dict['past_key_values_indexer'] = model.init_cache_for_indexer(
+        if input_dict['past_key_values_indexer'] is None \
+            and input_dict['past_key_scales_indexer'] is None:
+            input_dict['past_key_values_indexer'], input_dict['past_key_scales_indexer'] = \
+                model.init_cache_for_indexer(
                 inputs.input_ids,
                 num_hidden_layers=self.next_n if model.is_mtp else model.config.num_hidden_layers
             )
 
     def get_inputs(self, prompts, past_key_values, past_key_values_indexer,
-                   past_key_values_mtp, past_key_values_indexer_mtp, warm_up):
+                   past_key_values_mtp, past_key_values_indexer_mtp, 
+                   past_key_scales_indexer, past_key_scales_indexer_mtp, warm_up):
         tokenizer = self.main_model.tokenizer
         kwargs = {
             "return_tensors": "pt", "truncation": True, "padding": "max_length",
@@ -389,6 +402,7 @@ class Infer(nn.Module):
             "input_ids": inputs.input_ids, "generate_ids": inputs.input_ids,
             "input_lens": input_lens, "kv_len": None,
             "past_key_values": past_key_values, "past_key_values_indexer": past_key_values_indexer,
+            "past_key_scales_indexer": past_key_scales_indexer,
             "attention_mask": inputs.attention_mask,
             "share_mask_tril": share_mask_tril_main,
             "prev_hidden_states": None,
@@ -404,6 +418,7 @@ class Infer(nn.Module):
                 "input_lens": input_lens, "kv_len": None,
                 "past_key_values": past_key_values_mtp,
                 "past_key_values_indexer": past_key_values_indexer_mtp,
+                "past_key_scales_indexer": past_key_scales_indexer_mtp,
                 "attention_mask": mtp_attn_mask,
                 "share_mask_tril": share_mask_tril_mtp,
                 "prev_hidden_states": None,
@@ -462,6 +477,14 @@ class Infer(nn.Module):
                         past_key_value[0].narrow(0, j * batch_len, batch_len),
                     ),
                 )
+            input_dict_single_cycle['past_key_scales_indexer'] = ()
+            if self.kv_cache_c8:
+                for past_key_scale in input_dict['past_key_scales_indexer']:
+                    input_dict_single_cycle['past_key_scales_indexer'] += (
+                        (
+                            past_key_scale[0].narrow(0, j * batch_len, batch_len),
+                        ),
+                    )
         else:
             k, v = self.tmp_kv[0]
             input_dict_single_cycle['past_key_values'] = \
@@ -470,6 +493,11 @@ class Infer(nn.Module):
             input_dict_single_cycle['past_key_values_indexer'] = \
                 tuple([(self.tmp_indexer_kv[0][0].narrow(0, j * batch_len, batch_len), )] 
                     * self.main_model.model.config.num_hidden_layers)
+            if self.kv_cache_c8:
+                input_dict_single_cycle['past_key_scales_indexer'] = \
+                    tuple([(self.tmp_indexer_ks[0][0].narrow(0, j * batch_len, batch_len), )] 
+                        * self.main_model.model.config.num_hidden_layers)
+
         if is_mtp:
             input_dict_single_cycle['spec_tokens'] = input_dict['spec_tokens']
             input_dict_single_cycle['kv_len_cached'] = input_dict['kv_len_cached']
@@ -508,8 +536,9 @@ class Infer(nn.Module):
         if self.main_model.cp_size > 1:
             if self.tmp_kv is None:
                 self.tmp_kv = self.main_model.model.init_cache(input_ids, num_hidden_layers=1)
-            if self.tmp_indexer_kv is None:
-                self.tmp_indexer_kv = self.main_model.model.init_cache_for_indexer(input_ids, num_hidden_layers=1)
+            if self.tmp_indexer_kv is None or self.tmp_indexer_ks is None:
+                self.tmp_indexer_kv, self.tmp_indexer_ks = \
+                    self.main_model.model.init_cache_for_indexer(input_ids, num_hidden_layers=1)
 
     def cat_mini_batch_res(self, input_dict_cycles_res):
         input_dict = {}
@@ -560,12 +589,14 @@ class Infer(nn.Module):
         input_dict_main = self.cat_mini_batch_res(input_dict_main_cycles_res)
         input_dict_main['past_key_values'] = input_dict_main_ori['past_key_values']
         input_dict_main['past_key_values_indexer'] = input_dict_main_ori['past_key_values_indexer']
+        input_dict_main['past_key_scales_indexer'] = input_dict_main_ori['past_key_scales_indexer']
 
         input_dict_mtp, mtp_argdict = None, None
         if self.mtp_model is not None:
             input_dict_mtp = self.cat_mini_batch_res(input_dict_mtp_cycles_res)
             input_dict_mtp['past_key_values'] = input_dict_mtp_ori['past_key_values']
             input_dict_mtp['past_key_values_indexer'] = input_dict_mtp_ori['past_key_values_indexer']
+            input_dict_mtp['past_key_scales_indexer'] = input_dict_mtp_ori['past_key_scales_indexer']
 
             mtp_argdict = {}
             generate_tokens = []
@@ -586,13 +617,16 @@ class Infer(nn.Module):
         return input_dict_main, input_dict_mtp, mtp_argdict
 
     def model_generate(self, prompts, past_key_values=None, past_key_values_indexer=None,
-                       past_key_values_mtp=None, past_key_values_indexer_mtp=None, warm_up=False):
+                       past_key_values_mtp=None, past_key_values_indexer_mtp=None, 
+                       past_key_scales_indexer=None, past_key_scales_indexer_mtp=None, warm_up=False):
         # init input_dict and count
         input_dict_main, input_dict_mtp, inputs, input_lens = self.get_inputs(prompts,
                                                                               past_key_values,
                                                                               past_key_values_indexer,
                                                                               past_key_values_mtp,
                                                                               past_key_values_indexer_mtp,
+                                                                              past_key_scales_indexer,
+                                                                              past_key_scales_indexer_mtp,
                                                                               warm_up)
 
         if self.main_model.cp_size > 1:

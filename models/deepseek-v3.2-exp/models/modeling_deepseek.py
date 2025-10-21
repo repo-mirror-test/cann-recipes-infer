@@ -693,7 +693,7 @@ class DeepseekIndexerAttention(nn.Module):
             self.q_a_proj = ReplicatedLinear(self.hidden_size,
                                              self.q_lora_rank,
                                              bias=False,
-                                             quant_config=config.quant_config,
+                                             quant_config=None,
                                              prefix=f"{prefix}.q_a_proj")
             self.q_a_layernorm = DeepseekV3RMSNorm(config.q_lora_rank)
             self.q_b_proj = ColumnParallelLinear(config.q_lora_rank,
@@ -709,7 +709,7 @@ class DeepseekIndexerAttention(nn.Module):
                     self.hidden_size,
                     self.kv_lora_rank + self.qk_rope_head_dim,
                     bias=config.attention_bias,
-                    quant_config=config.quant_config,
+                    quant_config=None,
                     prefix=f"{prefix}.kv_a_proj_with_mqa")
         self.kv_a_layernorm = DeepseekV3RMSNorm(config.kv_lora_rank)
 
@@ -783,8 +783,6 @@ class DeepseekIndexerAttention(nn.Module):
                 .reshape(prefill_mini_batch_size, -1).to(dtype=torch.int32, device="npu")
 
         self.enable_weight_nz = runner_settings.get("model_config").get("enable_weight_nz", True)
-        self.enable_mla_prolog = runner_settings.get("model_config").get("enable_mla_prolog", False)
-        self.enable_mla_prolog = self.enable_mla_prolog and self.q_lora_rank is not None and self.enable_weight_nz
         self.use_faquant = False
         self.kv_scale = None
 
@@ -794,7 +792,8 @@ class DeepseekIndexerAttention(nn.Module):
         self.exe_mode = self.runner_settings.get("exe_mode", "eager")
         self.global_rank = kwargs.get("global_rank")
         self.enable_multi_streams = self.runner_settings.get("model_config").get("enable_multi_streams", False)
-
+        self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
+        
     def mla_epilog(
         self,
         attn_output: torch.Tensor = None,
@@ -851,6 +850,7 @@ class DeepseekIndexerAttention(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         past_key_values_indexer: Optional[Cache] = None,
+        past_key_scales_indexer: Optional[Cache] = None,
         is_prefill: bool = True,
         output_attentions: bool = False,
         slot_mapping: Optional[torch.Tensor] = None,
@@ -874,6 +874,7 @@ class DeepseekIndexerAttention(nn.Module):
             "position_ids": position_ids,
             "past_key_value": past_key_value,
             "past_key_values_indexer": past_key_values_indexer,
+            "past_key_scales_indexer": past_key_scales_indexer,
             "actual_seq_lengths_kv": actual_seq_lengths_kv,
             "attention_mask": attention_mask,
             "is_prefill": is_prefill,
@@ -897,6 +898,7 @@ class DeepseekIndexerAttention(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         past_key_values_indexer: Optional[Cache] = None,
+        past_key_scales_indexer: Optional[Cache] = None,
         is_prefill: bool = True,
         slot_mapping: Optional[torch.Tensor] = None,
         **kwargs,
@@ -909,6 +911,7 @@ class DeepseekIndexerAttention(nn.Module):
             position_ids=position_ids,
             past_key_value=past_key_value,
             past_key_values_indexer=past_key_values_indexer,
+            past_key_scales_indexer=past_key_scales_indexer,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
             actual_seq_lengths_q=actual_seq_lengths_q,
             attention_mask=attention_mask,
@@ -943,6 +946,7 @@ class DeepseekIndexerAttention(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         past_key_values_indexer: Optional[Cache] = None,
+        past_key_scales_indexer: Optional[Cache] = None,
         is_prefill: bool = True,
         slot_mapping: Optional[torch.Tensor] = None,
         cp_input_dict: Optional[Dict] = None,
@@ -956,6 +960,7 @@ class DeepseekIndexerAttention(nn.Module):
             position_ids=position_ids,
             past_key_value=past_key_value,
             past_key_values_indexer=past_key_values_indexer,
+            past_key_scales_indexer=past_key_scales_indexer,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
             attention_mask=attention_mask,
             is_prefill=is_prefill,
@@ -995,26 +1000,24 @@ class DeepseekIndexerAttention(nn.Module):
         output = self.mla_epilog(attn_output, absorb=True)
         return output
 
-  
-    def prepare_qkv(
+    def mlaprolog_prefill(
         self,
         hidden_states: torch.Tensor,
         cos_sin: torch.Tensor = None,
-        kv_len: torch.IntTensor = None,
-        position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
-        past_key_values_indexer: Optional[Cache] = None,
-        actual_seq_lengths_kv: Optional[torch.Tensor] = None,
-        actual_seq_lengths_q: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         is_prefill: bool = True,
         slot_mapping: Optional[torch.Tensor] = None,
         cp_input_dict: Optional[Dict] = None,
-        **kwargs,
+        c8_input_dict: Optional[Dict] = None,
     ):
         bsz, q_len, _ = hidden_states.size()
         qr = self.q_a_layernorm(self.q_a_proj(hidden_states))
         q = self.q_b_proj(qr)
+
+        if self.kv_cache_c8:
+            qr, q_scale = torch_npu.npu_dynamic_quant(qr)
+            c8_input_dict.update({'pertoken_scale': q_scale})
+
         q = q.view(bsz, q_len, self.num_heads_per_rank, self.q_head_dim)
         q_nope, q_pe = torch.split(
             q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
@@ -1022,7 +1025,7 @@ class DeepseekIndexerAttention(nn.Module):
         q_nope = q_nope.view(-1, self.num_heads_per_rank, self.qk_nope_head_dim)
         if self.kv_b_proj_w_k.shape[0] * self.kv_b_proj_w_k.shape[1] <= 65535:  # 65535: max value of uint16
             q_nope = torch_npu.npu_transpose_batchmatmul(q_nope, self.kv_b_proj_w_k, bias=None, scale=None,
-                                                         perm_x1=(1, 0, 2), perm_x2=(0, 1, 2), perm_y=(1, 0, 2)
+                                                        perm_x1=(1, 0, 2), perm_x2=(0, 1, 2), perm_y=(1, 0, 2)
                                                         )  # (b*s, n, d)
             q_nope = q_nope.view(bsz, q_len, self.num_heads_per_rank, self.kv_lora_rank)
         else:
@@ -1066,6 +1069,76 @@ class DeepseekIndexerAttention(nn.Module):
             q_pe = q_pe.view(-1, self.num_heads_per_rank, 1, self.qk_rope_head_dim)
             q_pe = torch_npu.npu_interleave_rope(q_pe, cos_q, sin_q).view(
                 bsz, -1, self.num_heads_per_rank, self.qk_rope_head_dim)  # (B,S,N,D)
+        return q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache
+
+    def mlaprolog_decode(
+        self,
+        hidden_states: torch.Tensor,
+        cos_sin: torch.Tensor = None,
+        past_key_value: Optional[Cache] = None,
+        slot_mapping: Optional[torch.Tensor] = None,
+        c8_input_dict: Optional[Dict] = None,
+    ):
+        bsz, q_len, _ = hidden_states.size()
+        nope_cache = past_key_value[self.layer_idx][0]
+        rope_cache = past_key_value[self.layer_idx][1]
+        cos, sin = cos_sin
+        cos = cos.view(-1, 1, 1, self.qk_rope_head_dim)
+        sin = sin.view(-1, 1, 1, self.qk_rope_head_dim)
+        hidden_states = hidden_states.view(bsz * q_len, -1)
+        q_nope, q_pe, dequant_scale_q_nope, qr, dequant_q_norm = torch.ops.custom.npu_mla_prolog_v3(
+            token_x=hidden_states,
+            weight_dq=self.q_a_proj.weight, weight_uq_qr=self.q_b_proj.weight,
+            weight_uk=self.kv_b_proj_w_k, weight_dkv_kr=self.kv_a_proj_with_mqa.weight,
+            rmsnorm_gamma_cq=self.q_a_layernorm.weight,
+            rmsnorm_gamma_ckv=self.kv_a_layernorm.weight,
+            rope_sin=sin.squeeze(1).squeeze(1), rope_cos=cos.squeeze(1).squeeze(1),
+            cache_index=slot_mapping,
+            kv_cache=nope_cache,
+            kr_cache=rope_cache,
+            dequant_scale_w_uq_qr=self.q_b_proj.weight_scale.view(1, -1),
+            rmsnorm_epsilon_cq=self.q_a_layernorm.variance_epsilon,
+            rmsnorm_epsilon_ckv=self.kv_a_layernorm.variance_epsilon,
+            cache_mode="PA_BSND",
+            query_norm_flag=True
+        )
+        k_nope = nope_cache
+        k_pe = rope_cache
+        if self.kv_cache_c8:
+            c8_input_dict.update({'pertoken_scale': dequant_q_norm})
+        return q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache
+  
+    def prepare_qkv(
+        self,
+        hidden_states: torch.Tensor,
+        cos_sin: torch.Tensor = None,
+        kv_len: torch.IntTensor = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        past_key_values_indexer: Optional[Cache] = None,
+        past_key_scales_indexer: Optional[Cache] = None,
+        actual_seq_lengths_kv: Optional[torch.Tensor] = None,
+        actual_seq_lengths_q: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        is_prefill: bool = True,
+        slot_mapping: Optional[torch.Tensor] = None,
+        cp_input_dict: Optional[Dict] = None,
+        **kwargs,
+    ):
+        c8_input_dict = {}
+        if self.kv_cache_c8 and not is_prefill:
+            q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache = self.mlaprolog_decode(
+                    hidden_states=hidden_states, cos_sin=cos_sin,
+                    past_key_value=past_key_value, slot_mapping=slot_mapping,
+                    c8_input_dict=c8_input_dict
+                    )
+        else:
+            q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache = self.mlaprolog_prefill(
+                hidden_states=hidden_states, cos_sin=cos_sin,
+                past_key_value=past_key_value, is_prefill=is_prefill, 
+                slot_mapping=slot_mapping, cp_input_dict=cp_input_dict,
+                c8_input_dict=c8_input_dict
+            )
         bsz = actual_seq_lengths_kv.shape[0]
         query_states = (q_nope.view(bsz, -1, self.num_heads_per_rank, self.kv_lora_rank), \
                         q_pe.view(bsz, -1, self.num_heads_per_rank, self.qk_rope_head_dim))  # 1,B*S,N,D -> B,S,N,D
@@ -1079,8 +1152,10 @@ class DeepseekIndexerAttention(nn.Module):
 
         topk_indices = self.indexer(hidden_states, qr, actual_seq_lengths_kv, kv_len, cos_sin, position_ids, \
                                     query_states, key_states, \
-                                    past_key_values_indexer, attention_mask, slot_mapping, block_table, \
-                                    actual_seq_lengths_q, cp_input_dict, is_prefill)
+                                    past_key_values_indexer, past_key_scales_indexer, \
+                                    attention_mask, slot_mapping, block_table, \
+                                    actual_seq_lengths_q, cp_input_dict, c8_input_dict,
+                                    is_prefill)
 
         return query_states, key_states, topk_indices
 
@@ -1207,6 +1282,7 @@ class DeepseekV3DecoderLayer(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         past_key_values_indexer: Optional[Tuple[torch.Tensor]] = None,
+        past_key_scales_indexer: Optional[Tuple[torch.Tensor]] = None,
         is_prefill: Optional[bool] = False,
         cur_topk_list: Optional[torch.Tensor] = None,
         slot_mapping: Optional[torch.Tensor] = None,
@@ -1226,6 +1302,7 @@ class DeepseekV3DecoderLayer(nn.Module):
             position_ids=position_ids,
             past_key_value=past_key_value,
             past_key_values_indexer=past_key_values_indexer,
+            past_key_scales_indexer=past_key_scales_indexer,
             is_prefill=is_prefill,
             slot_mapping=slot_mapping,
             cp_input_dict=cp_input_dict,
@@ -1363,6 +1440,7 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         past_key_values_indexer: Optional[List[torch.FloatTensor]] = None,
+        past_key_scales_indexer: Optional[List[torch.FloatTensor]] = None,
         is_prefill: Optional[bool] = False,
         cur_topk_list: Optional[torch.Tensor] = None,
         cp_input_dict: Optional[Dict] = None,
@@ -1407,6 +1485,7 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
                     position_ids=position_ids,
                     past_key_value=past_key_values,
                     past_key_values_indexer=past_key_values_indexer,
+                    past_key_scales_indexer=past_key_scales_indexer,
                     is_prefill=is_prefill,
                     cur_topk_list=cur_topk_list,
                     slot_mapping=slot_mapping,
@@ -1441,6 +1520,7 @@ class DeepseekV3ModelMTPLayer(DeepseekV3Model):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         past_key_values_indexer: Optional[List[torch.Tensor]] = None,
+        past_key_scales_indexer: Optional[List[torch.Tensor]] = None,
         is_prefill: Optional[bool] = False,
         cur_topk_list: Optional[torch.Tensor] = None,
         cp_input_dict: Optional[Dict] = None,
@@ -1459,6 +1539,7 @@ class DeepseekV3ModelMTPLayer(DeepseekV3Model):
             position_ids=position_ids,
             past_key_value=past_key_value,
             past_key_values_indexer=past_key_values_indexer,
+            past_key_scales_indexer=past_key_scales_indexer,
             is_prefill=is_prefill,
             cur_topk_list=cur_topk_list,
             cp_input_dict=cp_input_dict,
@@ -1482,6 +1563,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         self.next_n = self.runner_settings.get("model_config").get("next_n", 0)
         self.is_mtp = is_mtp
         self.enable_cache_compile = runner_settings.get("model_config").get("enable_cache_compile", False)
+        self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
 
         self.local_rank = int(os.getenv("LOCAL_RANK", "0"))
         self.rank_offset = int(os.getenv("RANK_OFFSET", "0"))
@@ -1745,6 +1827,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         past_key_values_indexer: Optional[List[torch.FloatTensor]] = None,
+        past_key_scales_indexer: Optional[List[torch.FloatTensor]] = None,
         is_prefill: Optional[bool] = False,
         cur_topk_list: Optional[torch.Tensor] = None,
         prev_hidden_states: Optional[torch.Tensor] = None,
@@ -1765,6 +1848,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             position_ids=position_ids,
             past_key_values=past_key_values,
             past_key_values_indexer=past_key_values_indexer,
+            past_key_scales_indexer=past_key_scales_indexer,
             is_prefill=is_prefill,
             cur_topk_list=cur_topk_list,
             cp_input_dict=cp_input_dict,
@@ -1851,21 +1935,30 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         num_hidden_layers=61,
     ):
         cache_seq_len = self.max_position_embeddings
-        dtype = self.config.torch_dtype
+        dtype = torch.int8 if self.kv_cache_c8 else self.config.torch_dtype 
 
         past_key_values = ()
+        past_key_scales = () if self.kv_cache_c8 else None
         cache_key_shape = (
                         self.kv_cache_num_block,
                         self.block_size,
                         1,
                         self.config.index_head_dim
                     )
+        cache_key_scales_shape = (
+                        self.kv_cache_num_block,
+                        self.block_size,
+                        1
+                    )
 
         for _ in range(num_hidden_layers):
             key_cache = torch.zeros(cache_key_shape, dtype=dtype, device=input_ids.device)
             past_key_values += ((key_cache, ),)
+            if self.kv_cache_c8:
+                key_scales_cache = torch.zeros(cache_key_scales_shape, dtype=torch.float16, device=input_ids.device)
+                past_key_scales += ((key_scales_cache, ),)
 
-        return past_key_values
+        return past_key_values, past_key_scales
 
     def gen_cur_topk_idx(
         self,
@@ -1946,6 +2039,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         input_ids,
         past_key_values=None,
         past_key_values_indexer=None,
+        past_key_scales_indexer=None,
         attention_mask=None,
         inputs_embeds=None,
         is_prefill=None,
@@ -1992,6 +2086,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             "position_ids": position_ids,
             "past_key_values": past_key_values,
             "past_key_values_indexer": past_key_values_indexer,
+            "past_key_scales_indexer": past_key_scales_indexer,
             "attention_mask": attention_mask,
             "kv_len": kv_len,
             "actual_seq_lengths_kv": actual_seq_lengths_kv,
@@ -2133,6 +2228,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         past_key_values_indexer: Optional[List[torch.Tensor]] = None,
+        past_key_scales_indexer: Optional[List[torch.Tensor]] = None,
         is_prefill: Optional[bool] = False,
         cur_topk_list: Optional[torch.Tensor] = None,
         cp_input_dict: Optional[Dict] = None,
@@ -2178,6 +2274,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
             position_ids=position_ids,
             past_key_value=past_key_values,
             past_key_values_indexer=past_key_values_indexer,
+            past_key_scales_indexer=past_key_scales_indexer,
             is_prefill=is_prefill,
             cur_topk_list=cur_topk_list,
             cp_input_dict=cp_input_dict,

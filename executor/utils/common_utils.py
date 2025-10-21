@@ -7,6 +7,8 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
+import math
+
 import logging
 from functools import wraps
 from typing import Dict
@@ -16,6 +18,18 @@ import torch
 import torch_npu
 import numpy as np
 import torchair as tng
+
+
+
+def get_had_pow2(n, norm=True):
+    if not ((n & (n - 1) == 0) and (n > 0)):
+        raise ValueError(f"n must be a positive power of 2, got{n}")
+    had = torch.ones(1, 1, dtype=torch.bfloat16).npu()
+    while had.shape[0] != n:
+        had = torch.cat((torch.cat([had, had], 1), torch.cat([had, -had], 1)), 0)
+        if norm:
+            had /= math.sqrt(2)
+    return had
 
 
 def read_yaml(yaml_file_path):

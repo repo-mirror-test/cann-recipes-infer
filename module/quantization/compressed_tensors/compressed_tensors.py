@@ -48,6 +48,8 @@ class CompressedTensorsConfig(QuantizationConfig):
         # Map from [target -> scheme]
         self.target_scheme_map = target_scheme_map
         self.kv_cache_scheme = kv_cache_scheme
+        self.kv_cache_c8 = (kv_cache_scheme.get("num_bits", None) == 8) if \
+            kv_cache_scheme is not None else False
         self.sparsity_scheme_map = sparsity_scheme_map
         self.sparsity_ignore_list = sparsity_ignore_list
         self.config = config

@@ -48,7 +48,6 @@ class DeepSeekRunner(ModelRunner):
         self.with_ckpt = runner_settings.get("model_config").get("with_ckpt", True)
         self.enable_weight_nz = runner_settings.get("model_config").get("enable_weight_nz", True)
         self.enable_cache_compile = runner_settings.get("model_config").get("enable_cache_compile", False)
-        self.enable_mla_prolog = runner_settings.get("model_config").get("enable_mla_prolog", False)
         self.share_mask_tril = get_init_attn_mask(2048, self.device)  # 2048: fixed shape of mask, used in PFA
         self.prefill_mini_batch_size = runner_settings.get("model_config").get("prefill_mini_batch_size", 0)
         self.batch_size_per_rank = runner_settings.get("data_config").get("batch_size_per_rank", 1)
@@ -84,17 +83,12 @@ class DeepSeekRunner(ModelRunner):
         # map for scales need to cast to float when apply w8a8 quant method
         float_scales_map = [
             "merge_up_gate_proj",
+            "q_b_proj",
         ]
         # map for smooth scales need to cast to float when apply w8a8 quant method
         float_smooth_scales_map = [
             "down_proj"
         ]
-        if self.enable_mla_prolog:
-            float_scales_map += [
-                "q_a_proj",
-                "q_b_proj",
-                "kv_a_proj_with_mqa"
-            ]
         for module_name, module in self.model.named_modules():
             if "kv_b_proj" in module_name:
                 continue

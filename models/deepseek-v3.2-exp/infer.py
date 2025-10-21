@@ -58,10 +58,15 @@ def run_deepseek(runner_settings):
     # generate perf data
     past_key_values_mtp = input_dict_mtp['past_key_values'] if next_n > 0 else None
     past_key_values_indexer_mtp = input_dict_mtp['past_key_values_indexer'] if next_n > 0 else None
+    past_key_scales_indexer = input_dict_main['past_key_scales_indexer']
+    past_key_scales_indexer_mtp = input_dict_mtp['past_key_scales_indexer'] if next_n > 0 else None
     infer.model_generate(preset_prompts, past_key_values=input_dict_main['past_key_values'],
                          past_key_values_indexer=input_dict_main['past_key_values_indexer'],
                          past_key_values_mtp=past_key_values_mtp,
-                         past_key_values_indexer_mtp=past_key_values_indexer_mtp)
+                         past_key_values_indexer_mtp=past_key_values_indexer_mtp,
+                         past_key_scales_indexer=past_key_scales_indexer,
+                         past_key_scales_indexer_mtp=past_key_scales_indexer_mtp
+                         )
 
 
 def check_parallel_settings(world_size, runner_settings):
