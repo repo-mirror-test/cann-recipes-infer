@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
+import torch.distributed as dist
 
 from executor.utils import get_init_attn_mask, process_infer_time, build_dataset_input, remove_padding_left
 
@@ -53,6 +54,7 @@ class Infer(nn.Module):
             if cycle_idx > 0:
                 return self.logits_wp, self.prev_hidden_states_wp, self.inference_time_wp
 
+        dist.barrier()  # barrier all ranks to avoid performance jitter caused by asynchrony among ranks
         torch.npu.synchronize()
         start_time = time.time()
         with torch.no_grad():
@@ -92,7 +94,6 @@ class Infer(nn.Module):
 
         is_prefill = input_dict.get("is_prefill")
         kv_len = input_dict.get("kv_len")
-        share_mask_tril = input_dict.get("share_mask_tril")
         prev_hidden_states = input_dict.get("prev_hidden_states")
 
         model_inputs = model.prepare_inputs_for_generation(
@@ -104,8 +105,7 @@ class Infer(nn.Module):
             prev_hidden_states=prev_hidden_states,
             is_prefill=is_prefill,
             kv_len=kv_len,
-            input_lens=input_dict.get("input_lens"),
-            share_mask_tril=share_mask_tril)
+            input_lens=input_dict.get("input_lens"))
         if model.perfect_eplb:
             b, s = model_inputs["input_ids"].shape
             if is_prefill and self.cp_size > 1:
@@ -392,9 +392,6 @@ class Infer(nn.Module):
             input_prompts.append([{"role":"user", "content": prompt}])
         inputs = tokenizer.apply_chat_template(input_prompts, **kwargs).to(self.main_model.device)
 
-        # 2048: fixed shape of mask, used in PFA
-        share_mask_tril_main = get_init_attn_mask(2048, self.main_model.device)
-        share_mask_tril_mtp = get_init_attn_mask(2048, self.main_model.device)
         input_lens = copy.deepcopy(inputs.input_ids.size()[1])
         if not warm_up:
             logging.info(f"Prompt lens is: {input_lens}")
@@ -404,7 +401,6 @@ class Infer(nn.Module):
             "past_key_values": past_key_values, "past_key_values_indexer": past_key_values_indexer,
             "past_key_scales_indexer": past_key_scales_indexer,
             "attention_mask": inputs.attention_mask,
-            "share_mask_tril": share_mask_tril_main,
             "prev_hidden_states": None,
             "is_prefill": True,
         }
@@ -420,7 +416,6 @@ class Infer(nn.Module):
                 "past_key_values_indexer": past_key_values_indexer_mtp,
                 "past_key_scales_indexer": past_key_scales_indexer_mtp,
                 "attention_mask": mtp_attn_mask,
-                "share_mask_tril": share_mask_tril_mtp,
                 "prev_hidden_states": None,
                 "is_prefill": True,
                 "spec_tokens": None,
@@ -452,7 +447,7 @@ class Infer(nn.Module):
                 input_dict_single_cycle[key] = input_dict[key][cycle_idx * self.mini_batch: \
                                                                (cycle_idx + 1) * self.mini_batch]
         # inputs should be copied
-        for key in ['input_lens', 'share_mask_tril']:
+        for key in ['input_lens']:
             input_dict_single_cycle[key] = input_dict[key]
 
         input_dict_single_cycle['is_prefill'] = True

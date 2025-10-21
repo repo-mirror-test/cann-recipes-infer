@@ -2041,11 +2041,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         past_key_values_indexer=None,
         past_key_scales_indexer=None,
         attention_mask=None,
-        inputs_embeds=None,
         is_prefill=None,
         kv_len=None,
-        share_mask_tril=None,
-        input_lens=None,
         prev_hidden_states=None,
         **kwargs
     ):
@@ -2057,17 +2054,13 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         if is_prefill:
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
-            attention_mask = share_mask_tril
             # Obtain the actual length of the request
             kv_len = torch.max(position_ids, axis=1)[0] + 1
             kv_len_withpad = torch.tensor(
                 [seq_len for _ in range(batch_size)], device=kv_len.device, dtype=kv_len.dtype)
             actual_seq_lengths_kv = self.get_actual_seq_lengths(kv_len_withpad)
         else:
-            if seq_len > 1: # fa requires sparse mode 3 and 2048 * 2048 mask for mtp
-                attention_mask = get_init_attn_mask(2048, kv_len.device)
-            else:
-                attention_mask = None
+            attention_mask = None
             actual_seq_lengths_kv = self.get_actual_seq_lengths(kv_len, seq_len, is_prefill)
             position_ids = kv_len.view(-1, seq_len) - 1
 
@@ -2082,7 +2075,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                                              is_prefill, input_ids.device)
 
         model_inputs = {
-            "input_ids": input_ids,
+            "input_ids": input_ids.to(torch.int32),
             "position_ids": position_ids,
             "past_key_values": past_key_values,
             "past_key_values_indexer": past_key_values_indexer,
