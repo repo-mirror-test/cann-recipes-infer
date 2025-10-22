@@ -1093,14 +1093,15 @@ class DeepseekIndexerAttention(nn.Module):
             rmsnorm_gamma_cq=self.q_a_layernorm.weight,
             rmsnorm_gamma_ckv=self.kv_a_layernorm.weight,
             rope_sin=sin.squeeze(1).squeeze(1), rope_cos=cos.squeeze(1).squeeze(1),
-            cache_index=slot_mapping,
+            cache_index=slot_mapping.view(-1),
             kv_cache=nope_cache,
             kr_cache=rope_cache,
             dequant_scale_w_uq_qr=self.q_b_proj.weight_scale.view(1, -1),
             rmsnorm_epsilon_cq=self.q_a_layernorm.variance_epsilon,
             rmsnorm_epsilon_ckv=self.kv_a_layernorm.variance_epsilon,
             cache_mode="PA_BSND",
-            query_norm_flag=True
+            query_norm_flag=True,
+            weight_quant_mode=1
         )
         k_nope = nope_cache
         k_pe = rope_cache

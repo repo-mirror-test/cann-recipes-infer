@@ -148,8 +148,8 @@ def generate_quant_group(a_num_bits=8, w_num_bits=8, targets=None):
 
 def generate_quant_config(c8, num_layers):
     ignores = generate_ignore_item(num_layers=num_layers)
-    kv_cache_scheme = True if c8 else None
-    quant_config = {"config_groups": {"group_0": {}, "group_1": {}}, "format": "int-quantized",
+    kv_cache_scheme = {"num_bits": 8} if c8 else None
+    quant_config = {"config_groups": {"group_0": {}}, "format": "int-quantized",
                     "global_compression_ratio": 1, "ignore": ignores, "kv_cache_scheme": kv_cache_scheme,
                     "quant_method": "compressed-tensors", "quantization_status": "compressed"}
     targets = ["Linear"]

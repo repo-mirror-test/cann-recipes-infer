@@ -1,6 +1,6 @@
 # DeepSeek-V3.2-Exp Inference on NPU
 ## 概述
-DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都达到了SOTA水平。本样例基于Deepseek开源代码进行迁移，并在CANN平台上完成对应的优化适配，可在华为 Atlas A3 集群上运行起来。
+DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都达到了SOTA水平。本样例基于DeepSeek开源代码进行迁移，并在CANN平台上完成对应的优化适配，可在华为 Atlas A3 集群上运行起来。
 
 - 本样例的并行策略和性能优化点详细介绍可参见[NPU DeepSeek-V3.2-Exp推理优化实践](../../docs/models/deepseek-v3.2-exp/deepseek_v3.2_exp_inference_guide.md)。
 
@@ -11,7 +11,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
 
 操作系统：Linux ARM
 
-镜像版本：cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image:v0.1
+镜像版本：cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image:v0.2
 
 驱动版本：Ascend HDK 25.2.0
 > npu-smi info 检查Ascend NPU固件和驱动是否正确安装。如果已安装，通过命令`npu-smi info`确认版本是否为 25.2.0。如果未安装或者版本不是 25.2.0，请先下载[固件和驱动包](https://support.huawei.com/enterprise/zh/ascend-computing/ascend-hdk-pid-252764743/software/264360782?idAbsPath=fixnode01|23710424|251366513|254884019|261408772|252764743)，然后根据[指导](https://hiascend.com/document/redirect/CannCommunityInstSoftware)自行安装。
@@ -39,7 +39,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
   下载[DeepSeek-V3.2-Exp原始fp8权重](https://huggingface.co/deepseek-ai/DeepSeek-V3.2-Exp)，并上传到Atlas A3各节点某个固定的路径下，比如`/data/models/DeepSeek-V3.2-Exp-fp8`。
 
 ### 获取 docker 镜像
-  从[ARM镜像地址](https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/cann8.3.rc1.alpha002/pt2.5.1/aarch/ascendc/cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image_v0.2.tar)中下载 docker 镜像，然后上传到A3服务器的每个节点上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image.tar`。
+  从[ARM镜像地址](https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/cann8.3.rc1.alpha002/pt2.5.1/aarch/ascendc/cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image_v0.2.tar)中下载 docker 镜像，然后上传到A3服务器的每个节点上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image_v0.2.tar`。
 
 ### 拉起 docker 容器
 
@@ -78,14 +78,26 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
 
 ### 转换权重
 
-  在各个节点上使用`convert_model.py` 脚本完成FP8到Bfloat16/Int8权重转换。脚本输入参数*input_fp8_hf_path*为原始fp8权重路径，*output_hf_path*为转换后的权重路径。
+  在各个节点上使用`convert_model.py` 脚本完成FP8到Bfloat16/Int8权重转换。脚本输入参数`input_fp8_hf_path`为原始fp8权重路径，`output_hf_path`为转换后的权重路径。
 
   ```
   # 转换为Bfloat16权重
   cd models/deepseek-v3.2-exp
   python utils/convert_model.py --input_fp8_hf_path /data/models/DeepSeek-V3.2-Exp-fp8 --output_hf_path /data/models/DeepSeek-V3.2-Exp-bf16
   ```
-  本版提供`W8A8C16`和`W8A8C8`量化版本，*w8a8*为Int8量化权重开关，*c8*为KVCache Int8量化开关， *clip*为量化上下界开关, *quant_param_path*是量化参数路径，配套量化参数可从[DeepSeek-V3.2-Exp W8A8C8量化参数](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/w8a8c8.zip)下载。可以使用以下命令下载和解压量化参数：
+当前提供`W8A8C16`和`W8A8C8`量化版本，转换脚本入参：
+
+`input_fp8_hf_path`：原始fp8权重路径
+
+`output_hf_path`：转换后输出的权重路径
+
+`w8a8`：w8a8量化开关
+
+`c8`：KVCache Int8量化开关
+
+`clip`：量化上下界开关
+
+`quant_param_path`：量化参数路径，配套量化参数可从[DeepSeek-V3.2-Exp W8A8C8量化参数](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/w8a8c8.zip)下载。可以使用以下命令下载和解压量化参数：
 
   ```
   export QUANT_DIR=/data/models/quantization
@@ -94,7 +106,8 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
   wget --no-check-certificate -P $QUANT_DIR $QUANT_URL && unzip $QUANT_DIR/w8a8c8.zip -d $QUANT_DIR
   ```
 
-  ```
+权重转换拉起示例：
+  ```  
   # 转换为W8A8C16权重
   cd models/deepseek-v3.2-exp
   python utils/convert_model.py --input_fp8_hf_path /data/models/DeepSeek-V3.2-Exp-fp8 --output_hf_path /data/models/DeepSeek-V3.2-Exp-W8A8C16 --w8a8
@@ -123,7 +136,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
   export YAML_FILE_NAME=deepseek_v3.2_exp_rank_64_64ep_prefill.yaml
   # BF16 decode
   export YAML_FILE_NAME=deepseek_v3.2_exp_rank_128_128ep_decode.yaml
-
+  
   # Int8 prefill
   export YAML_FILE_NAME=deepseek_v3.2_exp_rank_64_64ep_prefill_w8a8.yaml
   # Int8 decode
