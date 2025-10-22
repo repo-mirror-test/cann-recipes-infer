@@ -24,10 +24,10 @@ const int DIM_3 = 3;
 
 // 工具函数，推导输出shape
 at::Tensor construct_lightning_indexer_output_tensor(const at::Tensor& query, const at::Tensor& key,
-    const c10::optional<at::Tensor> &actual_seq_lengths_query, int64_t sparse_count, std::string query_layout_str)
+    const c10::optional<at::Tensor> &actual_seq_lengths_query, int64_t sparse_count, std::string query_layout_str, std::string key_layout_str)
 {
     at::SmallVector<int64_t, SIZE> output_size;
-    for (auto i = 0; i < query.sizes().size(); i++) {
+    for (size_t i = 0; i < query.sizes().size(); i++) {
         TORCH_CHECK(query.size(i) > 0, "All values within query's shape should be greater "
             "than 0, but shape[", i, "] is ", query.size(i));
     }
@@ -36,7 +36,9 @@ at::Tensor construct_lightning_indexer_output_tensor(const at::Tensor& query, co
     if (query_layout_str == "BSND") {
         output_size = {query.size(DIM_0), query.size(DIM_1), key.size(DIM_2), sparse_count};
     } else {
-        output_size = {query.size(DIM_0), key.size(DIM_2), sparse_count};
+        int n_dim_index = 0;
+        n_dim_index = (key_layout_str == "TND") ? DIM_1 : DIM_2;
+        output_size = {query.size(DIM_0), key.size(n_dim_index), sparse_count};       
     }
     at::Tensor output = at::empty(output_size, query.options().dtype(at::kInt));
 
@@ -56,7 +58,7 @@ at::Tensor npu_lightning_indexer_npu(
 
     // construct the output tensor
     at::Tensor lightning_indexer_output = construct_lightning_indexer_output_tensor(
-            query, key, actual_seq_lengths_query, sparse_count, query_layout_str);
+            query, key, actual_seq_lengths_query, sparse_count, query_layout_str, key_layout_str);
     // convert str
     char *query_layout_ptr = const_cast<char *>(query_layout_str.c_str());
     char *key_layout_ptr = const_cast<char *>(key_layout_str.c_str());
@@ -77,9 +79,10 @@ at::Tensor npu_lightning_indexer_meta(
     c10::string_view layout_key, int64_t sparse_count, int64_t sparse_mode)
 {
     std::string query_layout_str = std::string(layout_query);
+    std::string key_layout_str = std::string(layout_key);   
     // construct the output tensor
     at::Tensor lightning_indexer_output = construct_lightning_indexer_output_tensor(
-            query, key, actual_seq_lengths_query, sparse_count, query_layout_str);
+            query, key, actual_seq_lengths_query, sparse_count, query_layout_str, key_layout_str);
 
     return lightning_indexer_output;
 }

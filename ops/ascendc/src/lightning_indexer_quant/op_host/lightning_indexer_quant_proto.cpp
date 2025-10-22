@@ -23,6 +23,7 @@ namespace ops {
 constexpr uint32_t QUERY_INDEX = 0;
 constexpr uint32_t KEY_INDEX = 1;
 constexpr uint32_t ATTR_QUERY_LAYOUT_INDEX = 2;
+constexpr uint32_t ATTR_KV_LAYOUT_INDEX = 3;
 constexpr uint32_t ATTR_SPARSE_COUNT_INDEX = 4;
 
 static ge::graphStatus InferShapeLightningIndexerQuant(gert::InferShapeContext *context)
@@ -41,24 +42,28 @@ static ge::graphStatus InferShapeLightningIndexerQuant(gert::InferShapeContext *
     OPS_LOG_E_IF_NULL(context, attrs, return ge::GRAPH_FAILED);
     const char *inputLayoutQueryPtr = attrs->GetAttrPointer<char>(ATTR_QUERY_LAYOUT_INDEX);
     OPS_LOG_E_IF_NULL(context, inputLayoutQueryPtr, return ge::GRAPH_FAILED);
+    const char *inputLayoutKeyPtr = attrs->GetAttrPointer<char>(ATTR_KV_LAYOUT_INDEX);
+    OPS_LOG_E_IF_NULL(context, inputLayoutKeyPtr, return ge::GRAPH_FAILED);
     const int64_t *sparse_count = attrs->GetInt(ATTR_SPARSE_COUNT_INDEX);
     OPS_LOG_E_IF_NULL(context, sparse_count, return ge::GRAPH_FAILED);
 
     std::string inputLayoutQueryPtrStr = std::string(inputLayoutQueryPtr);
+    std::string inputLayoutKeyPtrStr = std::string(inputLayoutKeyPtr);
     if (inputLayoutQueryPtrStr != "TND" && inputLayoutQueryPtrStr != "BSND") {
         OPS_LOG_E(context, "The input layout query should be TND or BSND, but got %s.", inputLayoutQueryPtrStr.c_str());
         return GRAPH_FAILED;
     }
 
     outShape->SetDimNum(queryShape->GetDimNum());
+    int64_t keyHeadNum = (inputLayoutKeyPtrStr == "TND") ? keyShape->GetDim(1) : keyShape->GetDim(2);
     if (inputLayoutQueryPtrStr == "BSND") {
         outShape->SetDim(0, queryShape->GetDim(0));  // 0:Dim B
         outShape->SetDim(1, queryShape->GetDim(1));  // 1:Dim S
-        outShape->SetDim(2, keyShape->GetDim(2));    // 2:Dim N
+        outShape->SetDim(2, keyHeadNum);             // 2:Dim N
         outShape->SetDim(3, *sparse_count);          // 3:Dim K
     } else {
         outShape->SetDim(0, queryShape->GetDim(0));  // 0:Dim T
-        outShape->SetDim(1, keyShape->GetDim(2));    // 1:output shape's N Dim, 2: key shape's N Dim
+        outShape->SetDim(1, keyHeadNum);             // 1:output shape's N Dim, 2: key shape's N Dim
         outShape->SetDim(2, *sparse_count);          // 2:Dim K
     }
 

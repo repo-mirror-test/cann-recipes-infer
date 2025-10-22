@@ -22,7 +22,7 @@ const int SIZE = 8;
 at::Tensor construct_sparse_infer_output_tensor(
     const at::Tensor& query, const at::Tensor& value, std::string layout)
 {
-    for (auto i = 0; i < query.sizes().size(); i++) {
+    for (size_t i = 0; i < query.sizes().size(); i++) {
         TORCH_CHECK(query.size(i) > 0, "All values within query's shape should be greater "
             "than 0, but shape[", i, "] is ", query.size(i));
     }

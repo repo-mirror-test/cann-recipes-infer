@@ -24,6 +24,7 @@ constexpr uint32_t QUERY_INDEX = 0;
 constexpr uint32_t KEY_INDEX = 1;
 constexpr uint32_t ACTUAL_SEQ_K_INDEX = 4;
 constexpr uint32_t ATTR_QUERY_LAYOUT_INDEX = 0;
+constexpr uint32_t ATTR_KEY_LAYOUT_INDEX = 1;
 constexpr uint32_t ATTR_SPARSE_COUNT_INDEX = 2;
 
 static ge::graphStatus InferShapeLightningIndexer(gert::InferShapeContext *context)
@@ -40,9 +41,12 @@ static ge::graphStatus InferShapeLightningIndexer(gert::InferShapeContext *conte
     OPS_LOG_E_IF_NULL(context, attrs, return ge::GRAPH_FAILED);
     const char *inputLayoutQueryPtr = attrs->GetAttrPointer<char>(ATTR_QUERY_LAYOUT_INDEX);
     OPS_LOG_E_IF_NULL(context, inputLayoutQueryPtr, return ge::GRAPH_FAILED);
+    const char *inputLayoutKeyPtr = attrs->GetAttrPointer<char>(ATTR_KEY_LAYOUT_INDEX);
+    OPS_LOG_E_IF_NULL(context, inputLayoutKeyPtr, return ge::GRAPH_FAILED);
     const int64_t *seleced_count = attrs->GetInt(ATTR_SPARSE_COUNT_INDEX);
     OPS_LOG_E_IF_NULL(context, seleced_count, return ge::GRAPH_FAILED);
     std::string inputLayoutQueryPtrStr = std::string(inputLayoutQueryPtr);
+    std::string inputLayoutKeyPtrStr = std::string(inputLayoutKeyPtr);
     OPS_ERR_IF(
         inputLayoutQueryPtrStr != "TND" && inputLayoutQueryPtrStr != "BSND",
         OPS_LOG_E(context, "The attr layout_query should be TND or BSND, but got %s.", inputLayoutQueryPtrStr.c_str()),
@@ -63,9 +67,10 @@ static ge::graphStatus InferShapeLightningIndexer(gert::InferShapeContext *conte
             queryShape->GetDimNum() != 3,
             OPS_LOG_E(context, "Layout TND, queryDims (%zu) must be 3!", queryShape->GetDimNum()),
             return ge::GRAPH_FAILED);
-        outShape->SetDim(0, queryShape->GetDim(0)); // 0:Dim T
-        outShape->SetDim(1, keyShape->GetDim(2));   // 1:Dim N; 2:Key Dim N
-        outShape->SetDim(2, *seleced_count);        // 2:Dim K
+        outShape->SetDim(0, queryShape->GetDim(0));                      // 0:Dim T
+        int32_t nDimIndex = (inputLayoutKeyPtrStr == "PA_BSND") ? 2 : 1; // 2:Key Dim N
+        outShape->SetDim(1, keyShape->GetDim(nDimIndex));                // 1:Dim N
+        outShape->SetDim(2, *seleced_count);                             // 2:Dim K
     }
     OPS_LOG_D(context->GetNodeName(), "LightningIndexer InferShape end.");
 

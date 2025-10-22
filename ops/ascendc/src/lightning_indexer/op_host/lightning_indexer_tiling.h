@@ -57,6 +57,7 @@ constexpr uint32_t ATTR_KEY_LAYOUT_INDEX = 1;
 constexpr uint32_t ATTR_SPARSE_COUNT_INDEX = 2;
 constexpr uint32_t ATTR_SPARSE_MODE_INDEX = 3;
 // Dim Index
+constexpr uint32_t DIM_IDX_ONE = 1;
 constexpr uint32_t DIM_IDX_TWO = 2;
 constexpr uint32_t DIM_IDX_THREE = 3;
 // Dim Num

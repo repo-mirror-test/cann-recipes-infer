@@ -73,6 +73,7 @@ protected:
     __aicore__ inline void LoadQueryToL0a(uint64_t s1gL1Offset, uint64_t s1gL0Offset, uint64_t s1gL1RealSize,
                                           uint64_t s1gL0RealSize, const LICommon::RunInfo &runInfo);
     __aicore__ inline void QueryNd2Nz(uint64_t s1gL1RealSize, uint64_t s1gL1Offset, const LICommon::RunInfo &runInfo);
+    __aicore__ inline void KeyNd2Nz(uint64_t s2L1RealSize, uint64_t s2GmOffset, const LICommon::RunInfo &runInfo);
     __aicore__ inline void KeyNd2NzForPA(uint64_t s2L1RealSize, uint64_t s2GmOffset, const LICommon::RunInfo &runInfo);
     GlobalTensor<int32_t> blkTableGm_;
     GlobalTensor<K_T> keyGm_;
@@ -98,6 +99,9 @@ protected:
     uint64_t l0BufIdx_ = 0;
 
     ConstInfo constInfo_;
+
+private:
+    static constexpr bool PAGE_ATTENTION = LIT::pageAttention;
 };
 
 template <typename LIT>
@@ -144,7 +148,11 @@ __aicore__ inline void LIMatmul<LIT>::ComputeMm1(const LICommon::RunInfo &runInf
         WaitFlag<HardEvent::MTE1_MTE2>(KEY_MTE1_MTE2_EVENT + keyL1BufIdx_ % KEY_BUF_NUM);
         uint64_t s2L1RealSize =
             s2GmOffset + S2_BASIC_BLOCK > s2ProcessSize ? s2ProcessSize - s2GmOffset : S2_BASIC_BLOCK;
-        KeyNd2NzForPA(s2L1RealSize, s2GmBaseOffset + s2GmOffset, runInfo);
+        if(PAGE_ATTENTION){
+            KeyNd2NzForPA(s2L1RealSize, s2GmBaseOffset + s2GmOffset, runInfo);
+        }else {
+            KeyNd2Nz(s2L1RealSize, s2GmOffset, runInfo);
+        }
 
         SetFlag<HardEvent::MTE2_MTE1>(MTE2_MTE1_EVENT);
         WaitFlag<HardEvent::MTE2_MTE1>(MTE2_MTE1_EVENT);
@@ -191,6 +199,42 @@ __aicore__ inline void LIMatmul<LIT>::ComputeMm1(const LICommon::RunInfo &runInf
 
         SetFlag<HardEvent::MTE1_MTE2>(KEY_MTE1_MTE2_EVENT + keyL1BufIdx_ % KEY_BUF_NUM);
         keyL1BufIdx_++;
+    }
+}
+
+template <typename LIT>
+__aicore__ inline void LIMatmul<LIT>::KeyNd2Nz(uint64_t s2L1RealSize, uint64_t s2GmOffset,
+                                                    const LICommon::RunInfo &runInfo)
+{
+    uint64_t s2L1Offset = 0;
+    while (s2L1Offset < s2L1RealSize) {
+        uint64_t keyGmOffset = runInfo.tensorKeyOffset + (s2GmOffset + s2L1Offset) * constInfo_.headDim;
+        // 搬运按照S2_BASIC_BLOCK_L0*D_BASIC_BLOCK_L0的方式在l1上排布, 方便后续mte1
+        // 根据s2的offset判断当前属于前一个L0分型还是后一个L0分型，暂时只支持两个分型
+        uint64_t s2Mte2Size = (s2L1RealSize <= S2_BASIC_BLOCK_L0 || s2L1Offset >= S2_BASIC_BLOCK_L0) ?
+                                  s2L1RealSize - s2L1Offset :
+                                  S2_BASIC_BLOCK_L0 - s2L1Offset;
+
+        Nd2NzParams nd2nzPara;
+        nd2nzPara.ndNum = 1;
+        nd2nzPara.nValue = s2Mte2Size; // 行数
+        nd2nzPara.dValue = constInfo_.headDim;
+        nd2nzPara.srcDValue = constInfo_.headDim;
+        nd2nzPara.dstNzC0Stride = s2L1Offset >= S2_BASIC_BLOCK_L0 ?
+                                      CeilAlign(s2L1RealSize - S2_BASIC_BLOCK_L0, (uint64_t)BLOCK_CUBE) :
+                                      (s2L1RealSize > S2_BASIC_BLOCK_L0 ?
+                                           S2_BASIC_BLOCK_L0 :
+                                           CeilAlign(s2L1RealSize, (uint64_t)BLOCK_CUBE)); // 对齐到16 单位block
+        nd2nzPara.dstNzNStride = 1;
+        nd2nzPara.srcNdMatrixStride = 0;
+        nd2nzPara.dstNzMatrixStride = 0;
+        DataCopy(keyL1_[(keyL1BufIdx_ % KEY_BUF_NUM) * KEY_BUFFER_OFFSET +
+                        (s2L1Offset >= S2_BASIC_BLOCK_L0 ?
+                             S2_BASIC_BLOCK_L0 * D_BASIC_BLOCK_L0 + (s2L1Offset - S2_BASIC_BLOCK_L0) * BLOCK_CUBE :
+                             s2L1Offset * BLOCK_CUBE)],
+                 keyGm_[keyGmOffset], nd2nzPara);
+
+        s2L1Offset += s2Mte2Size;
     }
 }
 

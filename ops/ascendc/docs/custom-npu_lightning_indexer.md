@@ -15,7 +15,7 @@ $$
 ## 函数原型<a name="zh-cn_topic_0000001832267082_section45077510411"></a>
 
 ```
-custom.npu_lightning_indexer(query, key, weights, *, actual_seq_lengths_query=None, actual_seq_lengths_key=None, block_table=None, layout_query='BSND', layout_key='PA_BSND', sparse_count=2048, sparse_mode=3) -> Tensor
+custom.npu_lightning_indexer(query, key, weights, *, actual_seq_lengths_query=None, actual_seq_lengths_key=None, block_table=None, layout_query='BSND', layout_key='BSND', sparse_count=2048, sparse_mode=3) -> Tensor
 ```
 
 ## 参数说明<a name="zh-cn_topic_0000001832267082_section112637109429"></a>
@@ -25,11 +25,11 @@ custom.npu_lightning_indexer(query, key, weights, *, actual_seq_lengths_query=No
 >- query、key、weights参数维度含义：B（Batch Size）表示输入样本批量大小、S（Sequence Length）表示输入样本序列长度、H（Head Size）表示hidden层的大小、N（Head Num）表示多头数、D（Head Dim）表示hidden层最小的单元尺寸，且满足D=H/N、T表示所有Batch输入样本序列长度的累加和。
 >- S1表示query shape中的S，S2表示key shape中的S，N1表示query shape中的N，N2表示key shape中的N。
 
--   **query**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`。
+-   **query**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`和`float16`。
     
--   **key**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`，layout\_key为PA_BSND时shape为[block\_count, block\_size, N2, D]，其中block\_count为PageAttention时block总数，block\_size为一个block的token数。
+-   **key**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`和`float16`，layout\_key为PA_BSND时shape为[block\_count, block\_size, N2, D]，其中block\_count为PageAttention时block总数，block\_size为一个block的token数。
     
--   **weights**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`，支持输入shape[B,S1,N1,1]、[T,N1,1]。
+-   **weights**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`和`float16`，支持输入shape[B,S1,N1]、[T,N1]。
     
 - <strong>*</strong>：代表其之前的参数是位置相关的，必须按照顺序输入，属于必选参数；其之后的参数是键值对赋值，与位置无关，属于可选参数（不传入会使用默认值）。
 
@@ -43,7 +43,7 @@ custom.npu_lightning_indexer(query, key, weights, *, actual_seq_lengths_query=No
 
 -   **layout\_query**（`str`）：可选参数，用于标识输入`query`的数据排布格式，当前支持BSND、TND，默认值"BSND"。
 
--   **layout\_key**（`str`）：可选参数，用于标识输入`key`的数据排布格式，当前支持PA_BSND，默认值"PA_BSND"。
+-   **layout\_key**（`str`）：可选参数，用于标识输入`key`的数据排布格式，当前支持PA_BSND、BSND、TND，默认值"BSND"，在非PageAttention场景下，该参数值应与**layout\_query**值保持一致。
 
 -   **sparse\_count**（`int`）：可选参数，代表topK阶段需要保留的block数量，支持1-2048，数据类型支持`int32`。
 
@@ -63,6 +63,7 @@ custom.npu_lightning_indexer(query, key, weights, *, actual_seq_lengths_query=No
 -   该接口与PyTorch配合使用时，需要保证CANN相关包与PyTorch相关包的版本匹配。
 -   参数query中的N支持64，key中的N支持1。
 -   参数query中的D和参数key中的D值相等为128。
+-   参数query、key、weights的数据类型应保持一致。
 -   支持block_size取值为16的整数倍，最大支持到1024。
 
 ## 调用示例<a name="zh-cn_topic_0000001832267082_section14459801435"></a>

@@ -24,13 +24,15 @@ const int DIM_3 = 3;
 
 // 工具函数，推导输出shape
 at::Tensor construct_lightning_indexer_quant_output_tensor(const at::Tensor& query, const at::Tensor& key,
-                                                           int64_t sparse_count, std::string query_layout_str)
+                                                           int64_t sparse_count, std::string query_layout_str, 
+                                                           std::string key_layout_str)
 {
     at::SmallVector<int64_t, SIZE> output_size;
+    int64_t keyHeadNum = (key_layout_str == "TND")? key.size(DIM_1) : key.size(DIM_2);
     if (query_layout_str == "BSND") {
-        output_size = {query.size(DIM_0), query.size(DIM_1), key.size(DIM_2), sparse_count};
+        output_size = {query.size(DIM_0), query.size(DIM_1), keyHeadNum, sparse_count};
     } else {
-        output_size = {query.size(DIM_0), key.size(DIM_2), sparse_count};
+        output_size = {query.size(DIM_0), keyHeadNum, sparse_count};
     }
     at::Tensor output = at::empty(output_size, query.options().dtype(at::kInt));
 
@@ -51,7 +53,7 @@ at::Tensor npu_lightning_indexer_quant_npu(
 
     // construct the output tensor
     at::Tensor lightning_indexer_quant_output = construct_lightning_indexer_quant_output_tensor(
-            query, key, sparse_count, query_layout_str);
+            query, key, sparse_count, query_layout_str, key_layout_str);
     // convert str
     char *query_layout_ptr = const_cast<char *>(query_layout_str.c_str());
     char *key_layout_ptr = const_cast<char *>(key_layout_str.c_str());
@@ -74,9 +76,10 @@ at::Tensor npu_lightning_indexer_quant_meta(
     c10::string_view layout_query, c10::string_view layout_key, int64_t sparse_count, int64_t sparse_mode)
 {
     std::string query_layout_str = std::string(layout_query);
+    std::string key_layout_str = std::string(layout_key);
     // construct the output tensor
     at::Tensor lightning_indexer_quant_output = construct_lightning_indexer_quant_output_tensor(
-            query, key, sparse_count, query_layout_str);
+            query, key, sparse_count, query_layout_str, key_layout_str);
 
     return lightning_indexer_quant_output;
 }

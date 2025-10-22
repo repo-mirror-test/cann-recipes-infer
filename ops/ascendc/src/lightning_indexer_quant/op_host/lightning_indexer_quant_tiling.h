@@ -61,6 +61,8 @@ constexpr uint32_t ATTR_KEY_LAYOUT_INDEX = 3;
 constexpr uint32_t ATTR_SPARSE_COUNT_INDEX = 4;
 constexpr uint32_t ATTR_SPARSE_MODE_INDEX = 5;
 // Dim Index
+constexpr uint32_t DIM_IDX_ZERO = 0;
+constexpr uint32_t DIM_IDX_ONE = 1;
 constexpr uint32_t DIM_IDX_TWO = 2;
 constexpr uint32_t DIM_IDX_THREE = 3;
 // Dim Num
@@ -175,6 +177,7 @@ public:
     ge::graphStatus CheckShapeDim();
     ge::graphStatus GetAndCheckBlockSize();
     ge::graphStatus GetS2SizeForPageAttention();
+    ge::graphStatus GetS2SizeForBatchContinuous();
     ge::graphStatus GetS2Size();
     ge::graphStatus GetQueryKeyAndOutLayout();
     ge::graphStatus GetN1Size();
@@ -204,7 +207,7 @@ public:
     DataLayout kLayout_ = DataLayout::PA_BSND;
     // PageAttention
     uint32_t maxBlockNumPerBatch_ = 0;
-    uint32_t blockSize_ = 0;
+    int32_t blockSize_ = 0;
     platform_ascendc::SocVersion socVersion_ = platform_ascendc::SocVersion::ASCEND910B;
     ge::DataType inputQType_ = ge::DT_FLOAT16;
     ge::DataType inputKType_ = ge::DT_FLOAT16;

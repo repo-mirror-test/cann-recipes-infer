@@ -98,7 +98,7 @@ class TestCustomLightningIndexer(TestCase):
         np.random.seed(0)
         query = torch.tensor(np.random.uniform(-10, 10, (b, s1, n1, d))).to(torch.bfloat16)
         key = torch.tensor(np.random.uniform(-10, 10, (b*(s2//block_size), block_size, n2, d))).to(torch.bfloat16)
-        weights = torch.tensor(np.random.uniform(-1, 1, (b, s1, n1, 1))).to(torch.bfloat16)
+        weights = torch.tensor(np.random.uniform(-1, 1, (b, s1, n1))).to(torch.bfloat16)
         actual_seq_lengths_query = torch.tensor(np.random.uniform(s1, s1, (b))).to(torch.int32)
         actual_seq_lengths_key = torch.tensor(np.random.uniform(s2, s2, (b))).to(torch.int32)
         block_table = torch.tensor([range(b*s2//block_size)], dtype=torch.int32).reshape(b, -1)
@@ -148,7 +148,7 @@ class TestCustomLightningIndexer(TestCase):
         np.random.seed(0)
         query = torch.tensor(np.random.uniform(-10, 10, (b, s1, n1, d))).to(torch.bfloat16)
         key = torch.tensor(np.random.uniform(-10, 10, (b*(s2//block_size), block_size, n2, d))).to(torch.bfloat16)
-        weights = torch.tensor(np.random.uniform(-1, 1, (b, s1, n1, 1))).to(torch.bfloat16)
+        weights = torch.tensor(np.random.uniform(-1, 1, (b, s1, n1))).to(torch.bfloat16)
         actual_seq_lengths_query = torch.tensor(np.random.uniform(s1, s1, (b))).to(torch.int32)
         actual_seq_lengths_key = torch.tensor(np.random.uniform(s2, s2, (b))).to(torch.int32)
         block_table = torch.tensor([range(b*s2//block_size)], dtype=torch.int32).reshape(b, -1)
@@ -173,7 +173,7 @@ class TestCustomLightningIndexer(TestCase):
 
             def forward(self, query, key, weights, actual_seq_lengths_query=None, 
                     actual_seq_lengths_key=None, block_table=None, layout_query='BSND', 
-                    layout_key='PA_BSND', sparse_count=2048, sparse_mode=3):
+                    layout_key='BSND', sparse_count=2048, sparse_mode=3):
 
                 out1 = torch_npu.npu_lightning_indexer(query, key, weights,
                                                        actual_seq_lengths_query=actual_seq_lengths_query,  
@@ -219,7 +219,7 @@ class TestCustomLightningIndexer(TestCase):
         np.random.seed(3)
         query = torch.tensor(np.random.uniform(-10, 10, (t, n1, d))).to(torch.bfloat16)
         key = torch.tensor(np.random.uniform(-10, 10, (b*(s2//block_size), block_size, n2, d))).to(torch.bfloat16)
-        weights = torch.tensor(np.random.uniform(-1, 1, (t, n1, 1))).to(torch.bfloat16)
+        weights = torch.tensor(np.random.uniform(-1, 1, (t, n1))).to(torch.bfloat16)
         # TND格式下，actual_seq_lengths_query为前缀和表示
         actual_seq_lengths_query = torch.tensor([1, 3, 5]).to(torch.int32)
         actual_seq_lengths_key = torch.tensor(np.random.uniform(s2, s2, (b))).to(torch.int32)
@@ -269,7 +269,7 @@ class TestCustomLightningIndexer(TestCase):
         np.random.seed(3)
         query = torch.tensor(np.random.uniform(-10, 10, (t, n1, d))).to(torch.bfloat16)
         key = torch.tensor(np.random.uniform(-10, 10, (b*(s2//block_size), block_size, n2, d))).to(torch.bfloat16)
-        weights = torch.tensor(np.random.uniform(-1, 1, (t, n1, 1))).to(torch.bfloat16)
+        weights = torch.tensor(np.random.uniform(-1, 1, (t, n1))).to(torch.bfloat16)
         # TND格式下，actual_seq_lengths_query为前缀和表示
         actual_seq_lengths_query = torch.tensor([1, 3, 5]).to(torch.int32)
         actual_seq_lengths_key = torch.tensor(np.random.uniform(s2, s2, (b))).to(torch.int32)
@@ -295,7 +295,7 @@ class TestCustomLightningIndexer(TestCase):
 
             def forward(self, query, key, weights, actual_seq_lengths_query=None, 
                     actual_seq_lengths_key=None, block_table=None, layout_query='BSND', 
-                    layout_key='PA_BSND', sparse_count=2048, sparse_mode=3):
+                    layout_key='BSND', sparse_count=2048, sparse_mode=3):
 
                 out1 = torch.ops.custom.npu_lightning_indexer(query, key, weights,
                                                               actual_seq_lengths_query=actual_seq_lengths_query,  

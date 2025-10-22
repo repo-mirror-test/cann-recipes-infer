@@ -7,15 +7,15 @@
 
 ## 功能说明<a name="zh-cn_topic_0000001832267082_section14441124184110"></a>
 
-`LightningIndexerQuant`在[LightningIndexer](./custom-npu_lightning_indexer.md)的基础上支持了[Per-Token-Head量化](../../../docs/models/deepseek-v3.2-exp/deepseek_v3.2_exp_inference_guide.md)输入。对于某个 token 对应的 Index Query $Q_{index}^{INT8}\in\R^{g\times d}$ 及其反量化系数$Scale_{Q}\in\R^{g}$，给定上下文 Index Key $K_{index}^{INT8}\in\R^{S_{k}\times d}$ 及其反量化系数$Scale_{K}\in\R^{S_{k}}$, $W\in\R^{g\times 1}$，其中 $g$ 为 GQA 对应的 group size，$d$ 为每一个头的维度，$S_{k}$ 是上下文的长度，`LightningIndexerQuant`的具体计算公式如下：
+`LightningIndexerQuant`在[LightningIndexer](./custom-npu_lightning_indexer.md)的基础上支持了[Per-Token-Head量化](../../../docs/models/deepseek-v3.2-exp/deepseek_v3.2_exp_inference_guide.md)输入。对于某个 token 对应的 Index Query $Q_{index}^{INT8}\in\R^{g\times d}$ 及其反量化系数$Scale_{Q}\in\R^{g\times 1}$，给定上下文 Index Key $K_{index}^{INT8}\in\R^{S_{k}\times d}$ 及其反量化系数$Scale_{K}\in\R^{S_{k}\times 1}$, $W\in\R^{g\times 1}$，其中 $g$ 为 GQA 对应的 group size，$d$ 为每一个头的维度，$S_{k}$ 是上下文的长度，`LightningIndexerQuant`的具体计算公式如下：
 $$
-\text{Top-}k\left\{[1]_{1\times g}@\left[(W@[1]_{1\times S_{k}})\odot\text{ReLU}\left(\left(Scale_Q@Scale_K^T\right)\odot\left(Q_{index}^{INT8}@{K_{index}^{INT8}}^T\right)\right)\right]\right\}
+\text{Top-}k\left\{[1]_{1\times g}@\left[(W@[1]_{1\times S_{k}})\odot\text{ReLU}\left(\left(Scale_Q@Scale_K^T\right)\odot\left(Q_{index}^{INT8}@{\left(K_{index}^{INT8}\right)}^T\right)\right)\right]\right\}
 $$
 
 ## 函数原型<a name="zh-cn_topic_0000001832267082_section45077510411"></a>
 
 ```
-custom.npu_lightning_indexer_quant(query, key, weights, query_dequant_scale, key_dequant_scale, *, actual_seq_lengths_query=None, actual_seq_lengths_key=None, block_table=None, query_quant_mode=0, key_quant_mode=0, layout_query='BSND', layout_key='PA_BSND', sparse_count=2048, sparse_mode=3) -> Tensor
+custom.npu_lightning_indexer_quant(query, key, weights, query_dequant_scale, key_dequant_scale, *, actual_seq_lengths_query=None, actual_seq_lengths_key=None, block_table=None, query_quant_mode=0, key_quant_mode=0, layout_query='BSND', layout_key='BSND', sparse_count=2048, sparse_mode=3) -> Tensor
 ```
 
 ## 参数说明<a name="zh-cn_topic_0000001832267082_section112637109429"></a>
@@ -29,7 +29,7 @@ custom.npu_lightning_indexer_quant(query, key, weights, query_dequant_scale, key
     
 -   **key**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`int8`，layout\_key为PA_BSND时shape为[block\_count, block\_size, N2, D]，其中block\_count为PageAttention时block总数，block\_size为一个block的token数。
     
--   **weights**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`float16`，支持输入shape[B,S1,N1,1]、[T,N1,1]。
+-   **weights**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`float16`，支持输入shape[B,S1,N1]、[T,N1]。
 
 -   **query_dequant_scale**（`Tensor`）：必选参数，不支持非连续，数据格式支持ND，数据类型支持`float16`，支持输入shape[B,S1,N1]、[T,N1]。
 
@@ -51,7 +51,7 @@ custom.npu_lightning_indexer_quant(query, key, weights, query_dequant_scale, key
 
 -   **layout\_query**（`str`）：可选参数，用于标识输入`query`的数据排布格式，当前支持BSND、TND，默认值"BSND"。
 
--   **layout\_key**（`str`）：可选参数，用于标识输入`key`的数据排布格式，当前支持PA_BSND，默认值"PA_BSND"。
+-   **layout\_key**（`str`）：可选参数，用于标识输入`key`的数据排布格式，当前支持PA_BSND、BSND、TND，默认值"BSND"。在非PageAttention场景下，layout\_key应与layout\_query保持一致。
 
 -   **sparse\_count**（`int`）：可选参数，代表topK阶段需要保留的block数量，支持1-2048，数据类型支持`int32`。
 
@@ -74,6 +74,7 @@ custom.npu_lightning_indexer_quant(query, key, weights, query_dequant_scale, key
 -   支持block_size取值为16的整数倍，最大支持到1024。
 -   该接口要求$W \odot Scale_Q$的结果可以被`float16`表示。
 -   该接口要求**query_dequant_scale**、 **key_dequant_scale**的值均大于等于0。
+-   该接口的TopK过程对NAN排序是未定义行为。
 
 ## 调用示例<a name="zh-cn_topic_0000001832267082_section14459801435"></a>
 

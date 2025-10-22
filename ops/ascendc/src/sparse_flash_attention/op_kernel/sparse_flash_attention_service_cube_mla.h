@@ -394,7 +394,7 @@ SFAMatmulService<SFAT>::CopyInMm1BToL1(LocalTensor<KV_T> &bL1Tensor, const uint6
                                                    uint32_t nActCopyRowCount, uint32_t headSize)
 {
     uint64_t dStride = constInfo.headDim;
-    if constexpr (LAYOUT_T == SFA_LAYOUT::BSND || LAYOUT_T == SFA_LAYOUT::TND) {
+    if constexpr (KV_LAYOUT_T == SFA_LAYOUT::BSND || KV_LAYOUT_T == SFA_LAYOUT::TND) {
         dStride = constInfo.headDim * constInfo.kvHeadNum;
     }
 
@@ -419,7 +419,7 @@ SFAMatmulService<SFAT>::CopyInMm1BRopeToL1(LocalTensor<KV_T> &bL1Tensor, const u
                                                        uint32_t nActCopyRowCount, uint32_t headSize)
 {
     uint64_t dStride = constInfo.headDimRope;
-    if constexpr (LAYOUT_T == SFA_LAYOUT::BSND || LAYOUT_T == SFA_LAYOUT::TND) {
+    if constexpr (KV_LAYOUT_T == SFA_LAYOUT::BSND || KV_LAYOUT_T == SFA_LAYOUT::TND) {
         dStride = constInfo.headDimRope * constInfo.kvHeadNum;
     }
 
@@ -504,7 +504,7 @@ __aicore__ inline void SFAMatmulService<SFAT>::CopyInMm2BToL1(
     uint32_t copyStartRowCnt, uint32_t nActCopyRowCount, uint32_t copyStartColumnCount, uint32_t copyColumnCount)
 {
     uint64_t step = constInfo.headDim;
-    if constexpr (LAYOUT_T == SFA_LAYOUT::BSND || LAYOUT_T == SFA_LAYOUT::TND) {
+    if constexpr (KV_LAYOUT_T == SFA_LAYOUT::BSND || KV_LAYOUT_T == SFA_LAYOUT::TND) {
         step = constInfo.headDim * constInfo.kvHeadNum;
     }
 
@@ -620,7 +620,7 @@ __aicore__ inline void SFAMatmulService<SFAT>::ComputeMm1(const RunInfo &info, c
                 curOffsetInSparseBlock = curOffsetInSparseBlockTmp;
                 copyRowCnt = copyRowCntTmp;
                 idInTopK = idInTopKTmp;
-                if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+                if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                     if (kL1 == 0) {
                         Nd2NzParams nd2nzPara;
                         nd2nzPara.ndNum = 1;
@@ -710,7 +710,7 @@ __aicore__ inline void SFAMatmulService<SFAT>::ComputeMm1(const RunInfo &info, c
                         } else {
                             uint64_t keyOffset = info.tensorBOffset;
                             uint64_t kRopeOffset = info.tensorBRopeOffset;
-                            if constexpr (LAYOUT_T == SFA_LAYOUT::BSND || LAYOUT_T == SFA_LAYOUT::TND) {
+                            if constexpr (KV_LAYOUT_T == SFA_LAYOUT::BSND || KV_LAYOUT_T == SFA_LAYOUT::TND) {
                                 keyOffset += (idInTopK * constInfo.sparseBlockSize + curOffsetInSparseBlock) *
                                              constInfo.kvHeadNum * constInfo.headDim;
                                 kRopeOffset += (idInTopK * constInfo.sparseBlockSize + curOffsetInSparseBlock) *
@@ -914,7 +914,7 @@ __aicore__ inline void SFAMatmulService<SFAT>::ComputeMm2(const RunInfo &info, c
 
                 uint32_t curSeqIdx = info.s2BatchOffset + (kL1 - kOffset) * 128 + k1 * 256;
                 uint32_t copyFinishRowCnt = 0;
-                if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+                if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                     Nd2NzParams nd2nzPara;
                     nd2nzPara.ndNum = 1;
                     nd2nzPara.nValue = kL0Size;      // 行数
@@ -955,7 +955,7 @@ __aicore__ inline void SFAMatmulService<SFAT>::ComputeMm2(const RunInfo &info, c
                             DataCopyPA<KV_T, KV_LAYOUT_T>(subvTensor, valueGm, blockTableGm, shape, startPos);
                         } else {
                             uint64_t valueOffset = info.tensorBOffset;
-                            if constexpr (LAYOUT_T == SFA_LAYOUT::BSND || LAYOUT_T == SFA_LAYOUT::TND) {
+                            if constexpr (KV_LAYOUT_T == SFA_LAYOUT::BSND || KV_LAYOUT_T == SFA_LAYOUT::TND) {
                                 valueOffset += (idInTopK * constInfo.sparseBlockSize + curOffsetInSparseBlock) *
                                                constInfo.kvHeadNum * constInfo.headDim;
                             } else {

@@ -260,7 +260,7 @@ void SFAMlaTiling::ZeroTensorProcess()
 
 void SFAMlaTiling::InitParams()
 {
-    if (sfaInfo_->pageAttentionFlag && sfaInfo_->s2Size != 0 && sfaInfo_->sparseBlockSize <= 4) { // 4:当前支持范围
+    if (sfaInfo_->s2Size != 0 && sfaInfo_->sparseBlockSize <= 4) { // 4:当前支持范围
         perfMode_ = SFAPerfMode::V_TEMPLATE_MODE;
     } else {
         perfMode_ = SFAPerfMode::C_TEMPLATE_MODE;
@@ -660,7 +660,7 @@ ge::graphStatus SFATilingCheck::CheckSingleParaQuery() const
 
 ge::graphStatus SFATilingCheck::CheckSingleParaKey() const
 {
-    const std::vector<size_t> keyDimNumList = {DIM_NUM_FOUR};
+    const std::vector<size_t> keyDimNumList = {DIM_NUM_FOUR, DIM_NUM_THREE};
     if (ge::GRAPH_SUCCESS != CheckDtypeSupport(opParamInfo_.key.desc, KEY_NAME) ||
         ge::GRAPH_SUCCESS != CheckLayoutSupport(kvLayout_, KEY_NAME) ||
         ge::GRAPH_SUCCESS != CheckDimNumSupport(opParamInfo_.key.shape, keyDimNumList, KEY_NAME) ||
@@ -968,8 +968,13 @@ ge::graphStatus SFATilingCheck::CheckVAndKRopeShapeForBatchContinuous()
     shapeParams.B = bSize_;
     shapeParams.N = n2Size_;
     shapeParams.S = s2Size_;
-    shapeParams.D = vHeadDim_;
     shapeParams.T = kvTSize_;
+    shapeParams.D = qkHeadDim_;
+    if (CompareShape(shapeParams, keyShapeCmp_, kvLayout_, KEY_NAME) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    shapeParams.D = vHeadDim_;
     if (CompareShape(shapeParams, valueShapeCmp_, kvLayout_, VALUE_NAME) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
@@ -1000,6 +1005,9 @@ uint32_t SFATilingCheck::GetTypeSize(ge::DataType dtype) const
 ge::graphStatus SFATilingCheck::CheckVAndKRopeShapeForPageAttention()
 {
     int64_t blockNum = keyShapeCmp_.GetDim(0);
+    OPS_ERR_IF(blockNum <= 0,
+        OPS_LOG_E(opName_, "The first dim(%ld) of key should be greater than 0", blockNum),
+        return ge::GRAPH_FAILED);
     SFATilingShapeCompareParam shapeParams;
     shapeParams.Bn = blockNum;
     shapeParams.N = n2Size_;
@@ -1154,12 +1162,12 @@ ge::graphStatus SFATilingCheck::CheckFeatureMlaNoQuantShape() const
         return ge::GRAPH_FAILED);
         
     OPS_ERR_IF(qTSize_ <= 0 && (qLayout_ == SFALayout::TND),
-            OPS_LOG_E(opName_, "T_size of query should be greater than 0, but got %u", qTSize_),
-            return ge::GRAPH_FAILED);
+        OPS_LOG_E(opName_, "T_size of query should be greater than 0, but got %u", qTSize_),
+        return ge::GRAPH_FAILED);
 
     OPS_ERR_IF(n1Size_ <= 0,
-            OPS_LOG_E(opName_, "q_head_num should be greater than 0, but got %u", n1Size_),
-            return ge::GRAPH_FAILED);
+        OPS_LOG_E(opName_, "q_head_num should be greater than 0, but got %u", n1Size_),
+        return ge::GRAPH_FAILED);
 
     OPS_ERR_IF(n2Size_ != 1,
         OPS_LOG_E(opName_, "kv_head_num should be 1, but got %u", n2Size_),
@@ -1355,6 +1363,10 @@ ge::graphStatus SFAInfoParser::CheckRequiredInOutExistence() const
     OPS_ERR_IF(opParamInfo_.attenOut.shape == nullptr, OPS_LOG_E(opName_, "Shape of tensor output is nullptr"),
                return ge::GRAPH_FAILED);
     OPS_ERR_IF(opParamInfo_.attenOut.desc == nullptr, OPS_LOG_E(opName_, "Desc of tensor output is nullptr"),
+               return ge::GRAPH_FAILED);
+    OPS_ERR_IF(opParamInfo_.queryRope.tensor == nullptr, OPS_LOG_E(opName_, "Shape of queryRope is nullptr"),
+               return ge::GRAPH_FAILED);
+    OPS_ERR_IF(opParamInfo_.queryRope.desc == nullptr, OPS_LOG_E(opName_, "Desc of queryRope is nullptr"),
                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -1592,8 +1604,8 @@ ge::graphStatus SFAInfoParser::GetKvLayout()
         OPS_LOG_E(opName_, "layoutKV is %s, it is unsupported.", layout.c_str());
         return ge::GRAPH_FAILED;
     }
-    if (qLayout_ == SFALayout::TND && kvLayout_ != SFALayout::PA_BSND) {
-        OPS_LOG_E(opName_, "When layoutQ is TND, layoutKV only supports PA_BSND, but now is %s.", layout.c_str());
+    if (kvLayout_ != SFALayout::PA_BSND && qLayout_ != kvLayout_) {
+        OPS_LOG_E(opName_, "When layoutKV is not PA_BSND, layoutKV must be the same as layoutQ.");
         return ge::GRAPH_FAILED;
     }
     uint32_t keyDimNum = opParamInfo_.key.shape->GetStorageShape().GetDimNum();
@@ -1606,11 +1618,10 @@ ge::graphStatus SFAInfoParser::GetKvLayout()
 
 ge::graphStatus SFAInfoParser::GetS2SizeForBatchContinuous()
 {
-    if (kvLayout_ != SFALayout::BSND) {
-        OPS_LOG_E(opName_, "the layout of key is %s, it is unsupported.", SFALayoutToSerialString(kvLayout_).c_str());
-        return ge::GRAPH_FAILED;
-    } else if (kvLayout_ == SFALayout::BSND){ // BSND
+    if (kvLayout_ == SFALayout::BSND) { // BSND
         s2Size_ = GetAxisNum(keyShape_, SFAAxis::S, kvLayout_);
+    } else if (kvLayout_ == SFALayout::TND) {
+        s2Size_ = GetAxisNum(keyShape_, SFAAxis::T, kvLayout_);
     }
     return ge::GRAPH_SUCCESS;
 }

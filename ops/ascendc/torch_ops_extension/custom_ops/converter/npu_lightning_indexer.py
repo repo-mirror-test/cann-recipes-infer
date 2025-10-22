@@ -37,7 +37,7 @@ def convert_npu_lightning_indexer(
     actual_seq_lengths_key: Tensor = None,
     block_table: Tensor = None,
     layout_query: str = "BSND",
-    layout_key: str = "PA_BSND",
+    layout_key: str = "BSND",
     sparse_count: int = 2048,
     sparse_mode: int = 3,
     meta_outputs: Any = None):

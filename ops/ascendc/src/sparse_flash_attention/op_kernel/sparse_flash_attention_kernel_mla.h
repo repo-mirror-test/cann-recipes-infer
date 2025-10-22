@@ -313,12 +313,22 @@ __aicore__ inline void SparseFlashAttentionMla<SFAT>::GetSparseActualSeqLen(uint
 template <typename SFAT>
 __aicore__ inline uint32_t SparseFlashAttentionMla<SFAT>::GetActualSeqLenKV(uint32_t bIdx)
 {
-    if (constInfo.actualLenDimsKV == 0) {
-        return constInfo.kvSeqSize;
-    } else if (constInfo.actualLenDimsKV == 1) {
-        return actualSeqLengthsKVGm.GetValue(0);
+    if constexpr (KV_LAYOUT_T == SFA_LAYOUT::TND) {
+        if (bIdx > 0) {
+            return actualSeqLengthsKVGm.GetValue(bIdx) - actualSeqLengthsKVGm.GetValue(bIdx - 1);
+        } else if (bIdx == 0) {
+            return actualSeqLengthsKVGm.GetValue(0);
+        } else {
+            return 0;
+        }
     } else {
-        return actualSeqLengthsKVGm.GetValue(bIdx);
+        if (constInfo.actualLenDimsKV == 0) {
+            return constInfo.kvSeqSize;
+        } else if (constInfo.actualLenDimsKV == 1) {
+            return actualSeqLengthsKVGm.GetValue(0);
+        } else {
+            return actualSeqLengthsKVGm.GetValue(bIdx);
+        }
     }
 }
 
@@ -433,7 +443,7 @@ __aicore__ inline void SparseFlashAttentionMla<SFAT>::Init(__gm__ uint8_t *query
     offset += GetBlockNum() * dbWorkspaceRatio * constInfo.bmm2ResUbSize * sizeof(MM2_OUT_T);
     mm2ResInt32Gm.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(mm2ResGm.GetPhyAddr(0)));
 
-    if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+    if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
         // s2  d+rope bufNum
         kvMergeGm_.SetGlobalBuffer((__gm__ KV_T *)(workspace + offset + aiCoreIdx * 512 * 576 * 4 * sizeof(KV_T)));
         offset += GetBlockNum() * 512 * 576 * 4 * sizeof(KV_T);
@@ -453,7 +463,7 @@ __aicore__ inline void SparseFlashAttentionMla<SFAT>::Init(__gm__ uint8_t *query
     if ASCEND_IS_AIV {
         vectorService.InitParams(constInfo, tilingData);
         vectorService.InitMm2ResInt32GmGlobalTensor(mm2ResInt32Gm);
-        if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+        if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
             vectorService.InitVec0GlobalTensor(kvValidSizeGm_, kvMergeGm_, kRopeGm, keyGm, blockTableGm);
         }
         vectorService.InitVec1GlobalTensor(mm1ResGm, vec1ResGm, actualSeqLengthsQGm,
@@ -616,15 +626,24 @@ __aicore__ inline void SparseFlashAttentionMla<SFAT>::CalcParams(uint32_t loop, 
     } else {
         actualSeqQPrefixSum = (info.bIdx <= 0) ? 0 : info.bIdx * constInfo.qSeqSize;
     }
-    info.tndBIdxOffset = actualSeqQPrefixSum * constInfo.qHeadNum * headDim;
+    info.tndBIdxOffsetForQ = actualSeqQPrefixSum * constInfo.qHeadNum * headDim;
+
+    uint64_t actualSeqKVPrefixSum;
+    if constexpr (KV_LAYOUT_T == SFA_LAYOUT::TND) {
+        actualSeqKVPrefixSum = (info.bIdx <= 0) ? 0 : actualSeqLengthsKVGm.GetValue(info.bIdx - 1);
+    } else {
+        actualSeqKVPrefixSum = (info.bIdx <= 0) ? 0 : info.bIdx * constInfo.kvSeqSize;
+    }
+    info.tndBIdxOffsetForKV = actualSeqKVPrefixSum * constInfo.kvHeadNum * headDim;
 
     if (info.isFirstSInnerLoop) {
-        uint64_t tndBIdxRopeOffset = actualSeqQPrefixSum * constInfo.qHeadNum * headDimRope;
-        tensorACoreOffset = info.tndBIdxOffset + info.gS1Idx * headDim;
-        tensorARopeCoreOffset = tndBIdxRopeOffset + info.gS1Idx * headDimRope;
-        tensorBCoreOffset = info.bIdx * constInfo.kvSeqSize * kvHeadNum * headDim + info.n2Idx * headDim;
-        tensorBRopeCoreOffset =
-            info.bIdx * constInfo.kvSeqSize * kvHeadNum * headDimRope + info.n2Idx * headDimRope;
+        uint64_t tndBIdxRopeOffsetForQ = actualSeqQPrefixSum * constInfo.qHeadNum * headDimRope;
+        tensorACoreOffset = info.tndBIdxOffsetForQ + info.gS1Idx * headDim;
+        tensorARopeCoreOffset = tndBIdxRopeOffsetForQ + info.gS1Idx * headDimRope;
+        
+        uint64_t tndBIdxRopeOffsetForK = actualSeqKVPrefixSum * constInfo.kvHeadNum * headDimRope;
+        tensorBCoreOffset = info.tndBIdxOffsetForKV + info.n2Idx * headDim;
+        tensorBRopeCoreOffset = tndBIdxRopeOffsetForK + info.n2Idx * headDimRope;
         if (constInfo.sparseMode == 3) {
             threshold = static_cast<int64_t>(tempLoopInfo.nextTokensPerBatch) + info.gS1Idx / constInfo.gSize + 1;
         } else {
@@ -635,7 +654,7 @@ __aicore__ inline void SparseFlashAttentionMla<SFAT>::CalcParams(uint32_t loop, 
                             info.gS1Idx / constInfo.gSize * constInfo.kvHeadNum * constInfo.sparseBlockCount +
                             info.n2Idx * constInfo.sparseBlockCount;
         } else if (LAYOUT_T == SFA_LAYOUT::TND) {        // T N2 K
-            topKBaseOffset = info.tndBIdxOffset / constInfo.gSize / constInfo.headDim * constInfo.kvHeadNum *
+            topKBaseOffset = info.tndBIdxOffsetForQ / constInfo.gSize / constInfo.headDim * constInfo.kvHeadNum *
                              constInfo.sparseBlockCount + info.n2Idx * constInfo.sparseBlockCount +
                              info.gS1Idx / constInfo.gSize * constInfo.kvHeadNum * constInfo.sparseBlockCount;
         } else {                                         // B N2 S1 K
@@ -657,7 +676,7 @@ __aicore__ inline void SparseFlashAttentionMla<SFAT>::CalcParams(uint32_t loop, 
 
     info.curActualSeqLenOri = tempLoopInfo.curActualSeqLenOri;
     //计算实际基本块size
-    if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+    if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
         if (tempLoopInfo.curActualSeqLen > sInnerOffsetDataSize) {
             info.actualSingleProcessSInnerSize = tempLoopInfo.curActualSeqLen - sInnerOffsetDataSize;
             info.actualSingleProcessSInnerSize = info.actualSingleProcessSInnerSize > constInfo.s2BaseSize ?
@@ -738,7 +757,7 @@ template <typename SFAT> __aicore__ inline void SparseFlashAttentionMla<SFAT>::P
     bool globalLoopStart = true;
     if ASCEND_IS_AIC {
         CrossCoreSetFlag<ConstInfo::SFA_SYNC_MODE2, PIPE_FIX>(constInfo.syncC2V1);
-        if constexpr (PAGE_ATTENTION  && TEMPLATE_MODE == V_TEMPLATE) {
+        if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
             CrossCoreSetFlag<ConstInfo::SFA_SYNC_MODE2, PIPE_MTE2>(3);
             CrossCoreSetFlag<ConstInfo::SFA_SYNC_MODE2, PIPE_MTE2>(3);
             CrossCoreSetFlag<ConstInfo::SFA_SYNC_MODE2, PIPE_MTE2>(3);
@@ -787,7 +806,7 @@ template <typename SFAT> __aicore__ inline void SparseFlashAttentionMla<SFAT>::P
     }
     if ASCEND_IS_AIV {
         CrossCoreWaitFlag(constInfo.syncC2V1);
-        if constexpr (PAGE_ATTENTION  && TEMPLATE_MODE == V_TEMPLATE) {
+        if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
             CrossCoreWaitFlag(3);
             CrossCoreWaitFlag(3);
             CrossCoreWaitFlag(3);
@@ -810,12 +829,12 @@ SparseFlashAttentionMla<SFAT>::PreloadPipeline(uint32_t loop, uint64_t s2Start, 
 
     if (extraInfo0.isValid) {
         if ASCEND_IS_AIC {
-            if constexpr (PAGE_ATTENTION  && TEMPLATE_MODE == V_TEMPLATE) {
+            if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                 CrossCoreWaitFlag(constInfo.syncV0C1);
             }
             ComputeMm1(extraInfo0);
         } else {
-            if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+            if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                 CrossCoreWaitFlag(3);
                 vectorService.MergeKv(extraInfo0);
                 CrossCoreSetFlag<ConstInfo::SFA_SYNC_MODE2, PIPE_MTE3>(constInfo.syncV0C1);
@@ -828,7 +847,7 @@ SparseFlashAttentionMla<SFAT>::PreloadPipeline(uint32_t loop, uint64_t s2Start, 
         }
         if ASCEND_IS_AIC {
             ComputeMm2(extraInfo2);
-            if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+            if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                 CrossCoreSetFlag<ConstInfo::SFA_SYNC_MODE2, PIPE_MTE2>(3);
             }
         }
@@ -889,7 +908,7 @@ template <typename SFAT>
 __aicore__ inline void SparseFlashAttentionMla<SFAT>::CalcSinnerTopKBegin(RunInfo &info, uint32_t &curTopKIdx, uint64_t &curOffsetInSparseBlock)
 
 {
-    if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+    if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
         return;
     }
     
@@ -910,8 +929,8 @@ __aicore__ inline void SparseFlashAttentionMla<SFAT>::CalcSinnerTopKBegin(RunInf
     uint32_t sparseLen = 0;
     uint64_t blockBegin = sparseIndices * constInfo.sparseBlockSize;
     uint64_t blockEnd = (blockBegin + constInfo.sparseBlockSize > info.threshold) ? info.threshold : blockBegin + constInfo.sparseBlockSize;
-    uint64_t blockLen = blockEnd - blockBegin;
-    sparseLen += (blockLen - curOffsetInSparseBlock > 0) ? blockLen - curOffsetInSparseBlock : 0;
+    int32_t blockLen = blockEnd - blockBegin;
+    sparseLen += (blockLen > static_cast<int32_t>(curOffsetInSparseBlock)) ? blockLen - curOffsetInSparseBlock : 0;
 
     bool firstVaildFlag = false;
     if (curTopKIdx > 0) {

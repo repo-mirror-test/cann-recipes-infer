@@ -35,6 +35,8 @@ class LIQVector {
 public:
     // =================================类型定义区=================================
     static constexpr LI_LAYOUT Q_LAYOUT_T = LIQT::layout;
+    static constexpr LI_LAYOUT K_LAYOUT_T = LIQT::keyLayout;
+    static constexpr bool PAGE_ATTENTION = LIQT::pageAttention;
     // MM输出数据类型, 当前只支持float
     using MM1_OUT_T = float;
 
@@ -68,8 +70,8 @@ protected:
     // =================================常量区=================================
 
 private:
-    __aicore__ inline void GetKeyScale(const LocalTensor<half> &resUb, int64_t batchId, int64_t startS2,
-                                       int64_t getLen);
+    __aicore__ inline void GetKeyScale(const LIQCommon::RunInfo &runInfo, const LocalTensor<half> &resUb,
+                                       int64_t batchId, int64_t startS2, int64_t getLen);
     // ================================Local Buffer区====================================
     // queue
     TQue<QuePosition::VECIN, 1> inQueue_;
@@ -112,28 +114,51 @@ private:
 };
 
 template <typename LIQT>
-__aicore__ inline void LIQVector<LIQT>::GetKeyScale(const LocalTensor<half> &resUb, int64_t batchId, int64_t startS2,
-                                                    int64_t getLen)
+__aicore__ inline void LIQVector<LIQT>::GetKeyScale(const LIQCommon::RunInfo &runInfo, const LocalTensor<half> &resUb,
+                                                    int64_t batchId, int64_t startS2, int64_t getLen)
 {
     // startS2一定能整除kCacheBlockSize_
-    int32_t startBlockTableIdx = startS2 / kCacheBlockSize_;
-    int32_t blockTableBatchOffset = batchId * maxBlockNumPerBatch_;
     AscendC::DataCopyPadExtParams<half> padParams{false, 0, 0, 0};
     AscendC::DataCopyExtParams copyInParams;
-    copyInParams.blockCount = 1;
-    copyInParams.blockLen = kCacheBlockSize_ * sizeof(half);
-    copyInParams.srcStride = 0;
-    copyInParams.dstStride = 0;
-    copyInParams.rsv = 0;
-    int32_t getLoopNum = CeilDiv(getLen, kCacheBlockSize_);
-    for (int32_t i = 0; i < getLoopNum; i++) {
-        if (i == getLoopNum - 1) {
-            copyInParams.blockLen = (getLen - i * kCacheBlockSize_) * sizeof(half);
+    if constexpr (PAGE_ATTENTION) {
+        int32_t startBlockTableIdx = startS2 / kCacheBlockSize_;
+        int32_t startBlockTableOffset = startS2 % kCacheBlockSize_;
+        int32_t blockTableBatchOffset = batchId * maxBlockNumPerBatch_;
+        copyInParams.blockCount = 1;
+        copyInParams.srcStride = 0;
+        copyInParams.dstStride = 0;
+        copyInParams.rsv = 0;
+        int32_t resUbBaseOffset = 0;
+        if (startBlockTableOffset > 0) {
+            int32_t firstPartLen =
+                kCacheBlockSize_ - startBlockTableOffset > getLen ? getLen : kCacheBlockSize_ - startBlockTableOffset;
+            copyInParams.blockLen = firstPartLen * sizeof(half);
+            int32_t blockId = blockTableGm.GetValue(blockTableBatchOffset + startBlockTableIdx);
+            SetWaitFlag<HardEvent::S_MTE2>(HardEvent::S_MTE2);
+            AscendC::DataCopyPad(resUb, kScaleGm[blockId * kCacheBlockSize_ + startBlockTableOffset],
+                                 copyInParams, padParams);
+            startBlockTableIdx++;
+            getLen = getLen - firstPartLen;
+            resUbBaseOffset = firstPartLen;
         }
-        int32_t blockId = blockTableGm.GetValue(blockTableBatchOffset + startBlockTableIdx + i);
-        SetWaitFlag<HardEvent::S_MTE2>(HardEvent::S_MTE2);
-        AscendC::DataCopyPad(resUb[i * kCacheBlockSize_], kScaleGm[blockId * kCacheBlockSize_], copyInParams,
-                             padParams);
+        int32_t getLoopNum = CeilDiv(getLen, kCacheBlockSize_);
+        copyInParams.blockLen = kCacheBlockSize_ * sizeof(half);
+        for (int32_t i = 0; i < getLoopNum; i++) {
+            if (i == getLoopNum - 1) {
+                copyInParams.blockLen = (getLen - i * kCacheBlockSize_) * sizeof(half);
+            }
+            int32_t blockId = blockTableGm.GetValue(blockTableBatchOffset + startBlockTableIdx + i);
+            SetWaitFlag<HardEvent::S_MTE2>(HardEvent::S_MTE2);
+            AscendC::DataCopyPad(resUb[resUbBaseOffset + i * kCacheBlockSize_], kScaleGm[blockId * kCacheBlockSize_],
+                                 copyInParams, padParams);
+        }
+    } else {
+        copyInParams.blockCount = 1;
+        copyInParams.blockLen = getLen * sizeof(half);
+        copyInParams.srcStride = 0;
+        copyInParams.dstStride = 0;
+        copyInParams.rsv = 0;
+        AscendC::DataCopyPad(resUb, kScaleGm[runInfo.tensorKeyScaleOffset], copyInParams, padParams);
     }
 }
 
@@ -350,7 +375,7 @@ __aicore__ inline void LIQVector<LIQT>::ProcessVec1(const LIQCommon::RunInfo &in
             copyInParams.dstStride = 0;
             copyInParams.rsv = 0;
             AscendC::DataCopyPad(mmInUb, mm1ResGm[mmGmOffset + innerS1Idx * s2BaseSize_], copyInParams, padParams);
-            GetKeyScale(kScaleTUb, info.bIdx, cuBaseS2Idx, cuS2Len);
+            GetKeyScale(info, kScaleTUb, info.bIdx, cuBaseS2Idx, cuS2Len);
             inQueue_.EnQue<float>(mmInUb);
             mmInUb = inQueue_.DeQue<float>();
             AscendC::Cast(kScaleUb, kScaleTUb, RoundMode::CAST_NONE, cuS2Len);
@@ -460,7 +485,7 @@ __aicore__ inline void LIQVector<LIQT>::ProcessVec1(const LIQCommon::RunInfo &in
         }
 
         int32_t invalidS1Num2 = info.actS1Size - info.actS2Size;
-        if (invalidS1Num2 > 0 && isS1LoopEnd && blockS2StartIdx_ == 0) {
+        if (invalidS1Num2 > 0 && isS1LoopEnd && blockS2StartIdx_ == 0 && constInfo_.attenMaskFlag) {
             int32_t s1NumPerAiv = blockId_ % 2 == 0 ? CeilDiv(invalidS1Num2, 2) : (invalidS1Num2 / 2);
             int32_t s1OffsetPerAiv = (blockId_ % 2) * CeilDiv(invalidS1Num2, 2);
             for (int innerS1Idx = 0; innerS1Idx < s1NumPerAiv; innerS1Idx++) {
@@ -535,9 +560,9 @@ __aicore__ inline void LIQVector<LIQT>::ProcessLD()
         wsOffset = tmpCubeId * s1BaseSize_ * 2 * BASE_TOPK_VALUE_IDX_SIZE +  // 2个AIV共同地址偏移
                    innerS1Idx * 2 * BASE_TOPK_VALUE_IDX_SIZE + BASE_TOPK_VALUE_IDX_SIZE;
         SetWaitFlag<HardEvent::V_MTE2>(HardEvent::V_MTE2);
+        SetWaitFlag<HardEvent::S_MTE2>(HardEvent::S_MTE2);
         DataCopyPad(curValueIdxUb, vec1ResGm[wsOffset],
                     {1, static_cast<uint16_t>(BASE_TOPK_VALUE_IDX_SIZE * sizeof(int32_t)), 0, 0}, {true, 0, 0, 0});
-        SetWaitFlag<HardEvent::MTE2_V>(HardEvent::MTE2_V);
         acc_list_num++;
         valueOffset += BASE_TOPK_VALUE_IDX_SIZE;
 
@@ -554,10 +579,9 @@ __aicore__ inline void LIQVector<LIQT>::ProcessLD()
             wsOffset = tmpCubeId * s1BaseSize_ * 2 * BASE_TOPK_VALUE_IDX_SIZE +  // 2个AIV共同地址偏移
                        innerS1Idx * 2 * BASE_TOPK_VALUE_IDX_SIZE;
             SetWaitFlag<HardEvent::V_MTE2>(HardEvent::V_MTE2);
+            SetWaitFlag<HardEvent::S_MTE2>(HardEvent::S_MTE2);
             DataCopyPad(curValueIdxUb[valueOffset], vec1ResGm[wsOffset],
                         {1, static_cast<uint16_t>(BASE_TOPK_VALUE_IDX_SIZE * sizeof(int32_t)), 0, 0}, {true, 0, 0, 0});
-
-            SetWaitFlag<HardEvent::MTE2_V>(HardEvent::MTE2_V);
             valueOffset += BASE_TOPK_VALUE_IDX_SIZE;
             acc_list_num++;
 
@@ -578,7 +602,7 @@ __aicore__ inline void LIQVector<LIQT>::ProcessLD()
                 srcList.src2 = curValueIdxUb[BASE_TOPK_VALUE_IDX_SIZE];
                 srcList.src3 = curValueIdxUb[2 * BASE_TOPK_VALUE_IDX_SIZE];
                 srcList.src4 = curValueIdxUb[3 * BASE_TOPK_VALUE_IDX_SIZE];
-
+                SetWaitFlag<HardEvent::MTE2_V>(HardEvent::MTE2_V);
                 MrgSort(tmpUb, srcList, params);
                 PipeBarrier<PIPE_V>();
                 DataCopy(curValueIdxUb, tmpUb, BASE_TOPK_VALUE_IDX_SIZE);
@@ -618,7 +642,7 @@ __aicore__ inline void LIQVector<LIQT>::ProcessLD()
             srcList.src2 = curValueIdxUb[BASE_TOPK_VALUE_IDX_SIZE];
             srcList.src3 = curValueIdxUb[2 * BASE_TOPK_VALUE_IDX_SIZE];
             srcList.src4 = curValueIdxUb[3 * BASE_TOPK_VALUE_IDX_SIZE];
-
+            SetWaitFlag<HardEvent::MTE2_V>(HardEvent::MTE2_V);
             MrgSort(tmpUb, srcList, params);
             PipeBarrier<PIPE_V>();
             DataCopy(curValueIdxUb, tmpUb, BASE_TOPK_VALUE_IDX_SIZE);
@@ -628,12 +652,13 @@ __aicore__ inline void LIQVector<LIQT>::ProcessLD()
         // 搬出
         LocalTensor<float> outValueUb = ldOutValueBuf_.Get<float>();
         LocalTensor<uint32_t> outIdxUb = ldOutIdxBuf_.Get<uint32_t>();
-
         Extract(outValueUb, outIdxUb, curValueIdxUb, (BASE_TOPK / 32));
-        SetWaitFlag<HardEvent::V_MTE3>(HardEvent::V_MTE3);
         LocalTensor<int32_t> idxULocal1 = outIdxUb.template ReinterpretCast<int32_t>();
+        SetWaitFlag<HardEvent::V_MTE3>(HardEvent::V_MTE3);
+        SetWaitFlag<HardEvent::S_MTE3>(HardEvent::S_MTE3);
         DataCopyPad(indiceOutGm[outOffset], idxULocal1,
                     {1, static_cast<uint16_t>(constInfo_.sparseCount * sizeof(int32_t)), 0, 0});
+        SetWaitFlag<HardEvent::MTE3_V>(HardEvent::MTE3_V);
     }
 }
 }  // namespace LIQKernel

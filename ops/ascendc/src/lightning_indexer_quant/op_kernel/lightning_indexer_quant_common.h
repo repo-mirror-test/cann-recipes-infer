@@ -50,6 +50,8 @@ struct RunInfo {
     uint32_t actualSingleProcessSInnerSizeAlign;
 
     uint64_t tensorQueryOffset;
+    uint64_t tensorKeyOffset;
+    uint64_t tensorKeyScaleOffset;
     uint64_t tensorWeightsOffset;
     uint64_t indiceOutOffset;
 

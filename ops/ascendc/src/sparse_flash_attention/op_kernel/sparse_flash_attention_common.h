@@ -73,7 +73,8 @@ struct RunInfo {
     uint32_t s2Idx;
     uint32_t bn2IdxInCurCore;
     uint32_t curSInnerLoopTimes;
-    uint64_t tndBIdxOffset;
+    uint64_t tndBIdxOffsetForQ;
+    uint64_t tndBIdxOffsetForKV;
     uint64_t tensorAOffset;
     uint64_t tensorBOffset;
     uint64_t tensorARopeOffset;

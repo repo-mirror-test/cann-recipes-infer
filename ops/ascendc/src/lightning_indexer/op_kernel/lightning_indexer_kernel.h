@@ -92,6 +92,7 @@ protected:
 
     // offset
     uint64_t queryCoreOffset = 0ULL;
+    uint64_t keyCoreOffset = 0ULL;
     uint64_t weightsCoreOffset = 0ULL;
     uint64_t indiceOutCoreOffset = 0ULL;
 
@@ -291,12 +292,12 @@ __aicore__ void inline LIPreload<LIT>::SplitCore(uint32_t curCoreIdx, uint32_t &
         for (uint32_t gS1Idx = 0; gS1Idx < s1GBaseNum; gS1Idx++) {
             if (constInfo.attenMaskFlag) {
                 s2BaseNum = GetS2BaseBlockNumOnMask(gS1Idx, actS1Size, actS2Size);
-                if (findLastCoreEnd && s2BaseNum == 0U) {
-                    info.bN2Start = bN2Idx;
-                    info.gS1Start = gS1Idx;
-                    info.s2Start = 0;
-                    findLastCoreEnd = false;
-                }
+            }
+            if (findLastCoreEnd && s2BaseNum == 0U) {
+                info.bN2Start = bN2Idx;
+                info.gS1Start = gS1Idx;
+                info.s2Start = 0;
+                findLastCoreEnd = false;
             }
             for (uint32_t s2Idx = 0; s2Idx < s2BaseNum;) {
                 if (findLastCoreEnd) {
@@ -507,14 +508,19 @@ __aicore__ inline void LIPreload<LIT>::CalcRunInfo(uint32_t loop, uint32_t s2Loo
 
     if (runInfo.isFirstS2InnerLoop) {
         uint64_t actualSeqQPrefixSum;
+        uint64_t actualSeqKPrefixSum;
         if constexpr (LAYOUT_T == LI_LAYOUT::TND) {
             actualSeqQPrefixSum = (runInfo.bIdx <= 0) ? 0 : actualSeqLengthsGmQ.GetValue(runInfo.bIdx - 1);
+            actualSeqKPrefixSum = (runInfo.bIdx <= 0) ? 0 : actualSeqLengthsGm.GetValue(runInfo.bIdx - 1);
         } else { // BSND
             actualSeqQPrefixSum = (runInfo.bIdx <= 0) ? 0 : runInfo.bIdx * constInfo.qSeqSize;
+            actualSeqKPrefixSum = (runInfo.bIdx <= 0) ? 0 : runInfo.bIdx * constInfo.kSeqSize;
         }
         uint64_t tndBIdxOffset = actualSeqQPrefixSum * constInfo.qHeadNum * constInfo.headDim;
+        uint64_t tndKeyBIdxOffset = actualSeqKPrefixSum * constInfo.kHeadNum * constInfo.headDim;
         // B,S1,N1(N2,G),D
         queryCoreOffset = tndBIdxOffset + runInfo.gS1Idx * constInfo.mBaseSize * constInfo.headDim;
+        keyCoreOffset = tndKeyBIdxOffset + runInfo.n2Idx * constInfo.headDim;
         // B,S1,N1(N2,G)/T,N1(N2,G)
         weightsCoreOffset = actualSeqQPrefixSum * constInfo.qHeadNum + runInfo.n2Idx * constInfo.gSize;
         // B,S1,N2,k/T,N2,k
@@ -522,6 +528,7 @@ __aicore__ inline void LIPreload<LIT>::CalcRunInfo(uint32_t loop, uint32_t s2Loo
                               runInfo.n2Idx * constInfo.sparseCount;
     }
     runInfo.tensorQueryOffset = queryCoreOffset;
+    runInfo.tensorKeyOffset = keyCoreOffset + runInfo.s2Idx * constInfo.s2BaseSize * constInfo.kHeadNum * constInfo.headDim;
     runInfo.tensorWeightsOffset = weightsCoreOffset;
     runInfo.indiceOutOffset = indiceOutCoreOffset;
 }

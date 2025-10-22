@@ -1,6 +1,6 @@
 ## 概述
 
-此项目是基于昇腾Atlas A3的融合算子库，当前项目中包括[SparseFlashAttention](./docs/custom-npu_sparse_flash_attention.md)、[LightningIndexer](./docs/custom-npu_lightning_indexer.md)和[LightningIndexerQuant](./docs/custom-npu_lightning_indexer_quant.md)三个算子。
+此项目是基于昇腾Atlas A3的融合算子库，当前项目中包括[SparseFlashAttention](./docs/custom-npu_sparse_flash_attention.md)、[LightningIndexer](./docs/custom-npu_lightning_indexer.md)、[LightningIndexerQuant](./docs/custom-npu_lightning_indexer_quant.md)、[SwigluClipQuant](./docs/custom-npu_swiglu_clip_quant.md)和[MLAPrologV3](./docs/custom-npu_mla_prolog_v3.md)五个算子。
 
 ## 目录结构说明
 
@@ -18,6 +18,12 @@
   |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
   |   |   ├── op_kernel                         # 算子Kernel目录
   |   ├── lightning_indexer_quant               # 推理LightningIndexerQuant（简称liq）算子示例代码
+  |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
+  |   |   ├── op_kernel                         # 算子Kernel目录
+  |   ├── swiglu_clip_quant                     # 推理SwigluClipQuant算子示例代码
+  |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
+  |   |   ├── op_kernel                         # 算子Kernel目录
+  |   ├── mla_prolog_v3                         # 推理MLAPrologV3算子示例代码
   |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
   |   |   ├── op_kernel                         # 算子Kernel目录
   |
@@ -141,4 +147,6 @@ examples用例运行命令如下：
   python3 test_npu_lightning_indexer.py
   python3 test_npu_lightning_indexer_quant.py
   python3 test_npu_sparse_flash_attention.py   
+  python3 test_npu_swiglu_clip_quant.py
+  python3 test_npu_mla_prolog_v3.py
   ```

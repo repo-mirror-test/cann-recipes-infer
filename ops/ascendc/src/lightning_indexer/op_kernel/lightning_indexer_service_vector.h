@@ -432,7 +432,7 @@ __aicore__ inline void LIVector<LIT>::ProcessVec(const LICommon::RunInfo &info)
         }
 
         int32_t invalidS1Num2 = info.actS1Size - info.actS2Size;
-        if (invalidS1Num2 > 0 && isS1LoopEnd && blockS2StartIdx_ == 0) {
+        if (invalidS1Num2 > 0 && isS1LoopEnd && blockS2StartIdx_ == 0 && constInfo_.attenMaskFlag) {
             int32_t s1NumPerAiv = blockId_ % 2 == 0 ? CeilDiv(invalidS1Num2, 2) : (invalidS1Num2 / 2);
             int32_t s1OffsetPerAiv = (blockId_ % 2) * CeilDiv(invalidS1Num2, 2);
             for (int innerS1Idx = 0; innerS1Idx < s1NumPerAiv; innerS1Idx++) {
@@ -507,9 +507,9 @@ __aicore__ inline void LIVector<LIT>::ProcessLD()
         wsOffset = tmpCubeId * s1BaseSize_ * 2 * 2 * BASE_TOPK + // 2个AIV共同地址偏移
                    innerS1Idx * 2 * 2 * BASE_TOPK + 2 * BASE_TOPK;
         SetWaitFlag<HardEvent::V_MTE2>(HardEvent::V_MTE2);
+        SetWaitFlag<HardEvent::S_MTE2>(HardEvent::S_MTE2);
         DataCopyPad(curValueIdxUb, vec1ResGm[wsOffset],
                     {1, static_cast<uint16_t>(2 * BASE_TOPK * sizeof(int32_t)), 0, 0}, {true, 0, 0, 0});
-        SetWaitFlag<HardEvent::MTE2_V>(HardEvent::MTE2_V);
         acc_list_num++;
         valueOffset += 2 * BASE_TOPK;
 
@@ -526,10 +526,9 @@ __aicore__ inline void LIVector<LIT>::ProcessLD()
             wsOffset = tmpCubeId * s1BaseSize_ * 2 * 2 * BASE_TOPK + // 2个AIV共同地址偏移
                        innerS1Idx * 2 * 2 * BASE_TOPK;
             SetWaitFlag<HardEvent::V_MTE2>(HardEvent::V_MTE2);
+            SetWaitFlag<HardEvent::S_MTE2>(HardEvent::S_MTE2);
             DataCopyPad(curValueIdxUb[valueOffset], vec1ResGm[wsOffset],
                         {1, static_cast<uint16_t>(2 * BASE_TOPK * sizeof(int32_t)), 0, 0}, {true, 0, 0, 0});
-
-            SetWaitFlag<HardEvent::MTE2_V>(HardEvent::MTE2_V);
             valueOffset += 2 * BASE_TOPK;
             acc_list_num++;
 
@@ -550,7 +549,7 @@ __aicore__ inline void LIVector<LIT>::ProcessLD()
                 srcList.src2 = curValueIdxUb[2 * BASE_TOPK];
                 srcList.src3 = curValueIdxUb[4 * BASE_TOPK];
                 srcList.src4 = curValueIdxUb[6 * BASE_TOPK];
-
+                SetWaitFlag<HardEvent::MTE2_V>(HardEvent::MTE2_V);
                 MrgSort(tmpUb, srcList, params);
                 PipeBarrier<PIPE_V>();
                 DataCopy(curValueIdxUb, tmpUb, 2 * BASE_TOPK);
@@ -590,7 +589,7 @@ __aicore__ inline void LIVector<LIT>::ProcessLD()
             srcList.src2 = curValueIdxUb[2 * BASE_TOPK];
             srcList.src3 = curValueIdxUb[4 * BASE_TOPK];
             srcList.src4 = curValueIdxUb[6 * BASE_TOPK];
-
+            SetWaitFlag<HardEvent::MTE2_V>(HardEvent::MTE2_V);
             MrgSort(tmpUb, srcList, params);
             PipeBarrier<PIPE_V>();
             DataCopy(curValueIdxUb, tmpUb, 2 * BASE_TOPK);
@@ -602,10 +601,12 @@ __aicore__ inline void LIVector<LIT>::ProcessLD()
         LocalTensor<uint32_t> outIdxUb = ldOutIdxBuf_.Get<uint32_t>();
 
         Extract(outValueUb, outIdxUb, curValueIdxUb, (BASE_TOPK / 32));
-        SetWaitFlag<HardEvent::V_MTE3>(HardEvent::V_MTE3);
         LocalTensor<int32_t> idxULocal1 = outIdxUb.template ReinterpretCast<int32_t>();
+        SetWaitFlag<HardEvent::V_MTE3>(HardEvent::V_MTE3);
+        SetWaitFlag<HardEvent::S_MTE3>(HardEvent::S_MTE3);
         DataCopyPad(indiceOutGm[outOffset], idxULocal1,
                     {1, static_cast<uint16_t>(constInfo_.sparseCount * sizeof(int32_t)), 0, 0});
+        SetWaitFlag<HardEvent::MTE3_V>(HardEvent::MTE3_V);
     }
 }
 } // namespace LIKernel

@@ -49,6 +49,7 @@ public:
 
     static constexpr IsResetLoad3dConfig LOAD3DV2_CONFIG = {true, true};  // isSetFMatrix isSetPadding;
     static constexpr uint64_t DOUBLE_BUF_NUM = 2;
+    static constexpr uint64_t L0AB_BUF_NUM = 4;
 
     static constexpr uint32_t KEY_MTE1_MTE2_EVENT = EVENT_ID2;
     static constexpr uint32_t QW_MTE1_MTE2_EVENT = EVENT_ID5;  // KEY_MTE1_MTE2_EVENT + DOUBLE_BUF_NUM;
@@ -56,6 +57,8 @@ public:
     static constexpr uint32_t M_FIX_EVENT = EVENT_ID0;
     static constexpr uint32_t FIX_M_EVENT = EVENT_ID2;
     static constexpr uint32_t FIX_MTE1_EVENT = EVENT_ID4;
+
+    static constexpr uint64_t S8_BLOCK_CUBE = 32;
 
     static constexpr uint32_t MTE2_MTE1_EVENT = EVENT_ID2;
     static constexpr uint32_t MTE1_M_EVENT = EVENT_ID2;
@@ -70,9 +73,9 @@ public:
     static constexpr uint64_t SL1_BUFFER_OFFSET = S1G_BASIC_BLOCK_L0 * S2_BASIC_BLOCK_L0;
     static constexpr uint64_t KEY_BUFFER_OFFSET = S2_BASIC_BLOCK_L0 * D_BASIC_BLOCK;
     static constexpr uint64_t WEIGHT_BUFFER_OFFSET = S1G_BASIC_BLOCK_L1 * BLOCK_CUBE;
-    static constexpr uint64_t L0AB_BUFFER_OFFSET_S8_32K = 32 * 1024;
-    static constexpr uint64_t L0AB_BUFFER_OFFSET_FP16_32K = 32 * 512;
-    static constexpr uint64_t L0C_BUFFER_OFFSET = S1G_BASIC_BLOCK_L0 * S2_BASIC_BLOCK_L0;
+    static constexpr uint64_t L0AB_BUFFER_OFFSET_S8_16K = 16 * 1024;
+    static constexpr uint64_t L0AB_BUFFER_OFFSET_FP16_16K = 16 * 512;
+    static constexpr uint64_t L0C_BUFFER_OFFSET = 64 * 256;
 
 private:
     __aicore__ inline void WeightDmaCopy(uint64_t s1gL1RealSize, const LIQCommon::RunInfo &runInfo);
@@ -80,10 +83,12 @@ private:
     __aicore__ inline void LoadQueryToL0a(uint64_t s1gL1Offset, uint64_t s1gL1RealSize, uint64_t s1gL0RealSize);
     __aicore__ inline void QueryNd2Nz(uint64_t s1gL1RealSize, const LIQCommon::RunInfo &runInfo);
     __aicore__ inline void KeyNd2NzForPA(uint64_t s2L1RealSize, uint64_t s2GmOffset, const LIQCommon::RunInfo &runInfo);
+    __aicore__ inline void KeyNd2Nz(uint64_t s2L1RealSize, const MmInfo &mmInfo, const LIQCommon::RunInfo &runInfo);
     __aicore__ inline void FixpSToL1(uint64_t s1gL0RealSize, uint64_t s2L0RealSize);
-    __aicore__ inline void LoadSToL0b(uint64_t s1gL1RealSize, uint64_t s2L0RealSize, uint64_t sL1BufIdx);
-    __aicore__ inline void LoadWeightToL0a(uint64_t s1gL0RealSize, uint64_t s1gL1Offset);
-    __aicore__ inline void ComputeWs(uint64_t s1gL0RealSize, uint64_t s2L0RealSize);
+    __aicore__ inline void LoadSToL0b(uint64_t s1gL1RealSize, uint64_t s2L0RealSize, uint64_t sL1BufIdx,
+                                      int64_t mStartPt);
+    __aicore__ inline void LoadWeightToL0a(uint64_t s1gL1Offset);
+    __aicore__ inline void ComputeWs(uint64_t s1gL0RealSize, uint64_t s2L0RealSize, int64_t s1gOffset);
     __aicore__ inline void FixpResToGm(uint64_t s1L0RealCount, uint64_t s2L0RealSize, uint64_t s1GmOffset,
                                        uint64_t s2GmOffset, const LIQCommon::RunInfo &runInfo);
     __aicore__ inline void ComputeQk(uint64_t s1gL0RealSize, uint64_t s2L0RealSize);
@@ -93,6 +98,8 @@ private:
                                      const MmInfo &mmInfo, const LIQCommon::RunInfo &runInfo);
     __aicore__ inline void CalcMmInfo(MmInfo &mmInfo, uint64_t loopIdx, uint64_t s1L0LoopCnt, const MmInfo &lastMmInfo,
                                       const LIQCommon::RunInfo &runInfo);
+    static constexpr LI_LAYOUT Q_LAYOUT_T = LIQT::layout;
+    static constexpr LI_LAYOUT K_LAYOUT_T = LIQT::keyLayout;
     GlobalTensor<int32_t> blkTableGm_;
     GlobalTensor<K_T> keyGm_;
     GlobalTensor<Q_T> queryGm_;
@@ -171,18 +178,22 @@ template <typename LIQT>
 __aicore__ inline void LIQMatmul<LIQT>::ProcessWs(uint64_t s1gL0RealSize, uint64_t s1gL1Offset, uint64_t sL1BufIdx,
                                                   const MmInfo &mmInfo, const LIQCommon::RunInfo &runInfo)
 {
-    WaitFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + l0BufIdx_ % DOUBLE_BUF_NUM);
-    LoadSToL0b(s1gL0RealSize, mmInfo.s2L0RealSize, sL1BufIdx);
-    LoadWeightToL0a(s1gL0RealSize, s1gL1Offset);
+    WaitFlag<HardEvent::FIX_M>(FIX_M_EVENT + l0cBufIdx_ % DOUBLE_BUF_NUM);
+    for (int64_t s1gOffset = 0; s1gOffset < s1gL0RealSize; s1gOffset += constInfo_.gSize) {
+        WaitFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + l0BufIdx_ % L0AB_BUF_NUM);
+        LoadSToL0b(s1gL0RealSize, mmInfo.s2L0RealSize, sL1BufIdx, s1gOffset);
+        LoadWeightToL0a(s1gOffset + s1gL1Offset);
 
-    WaitFlag<HardEvent::FIX_M>(FIX_M_EVENT + l0BufIdx_ % DOUBLE_BUF_NUM);
-    ComputeWs(s1gL0RealSize, mmInfo.s2L0RealSize);
+        ComputeWs(s1gL0RealSize, mmInfo.s2L0RealSize, s1gOffset);
 
-    SetFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + l0BufIdx_ % DOUBLE_BUF_NUM);
+        SetFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + l0BufIdx_ % L0AB_BUF_NUM);
+        l0BufIdx_++;
+    }
+
     FixpResToGm(s1gL0RealSize / constInfo_.gSize, mmInfo.s2L0RealSize, s1gL1Offset / constInfo_.gSize,
                 mmInfo.s2L0LoopId * S2_BASIC_BLOCK_L0, runInfo);
-    SetFlag<HardEvent::FIX_M>(FIX_M_EVENT + l0BufIdx_ % DOUBLE_BUF_NUM);
-    l0BufIdx_++;
+    SetFlag<HardEvent::FIX_M>(FIX_M_EVENT + l0cBufIdx_ % DOUBLE_BUF_NUM);
+    l0cBufIdx_++;
 }
 
 template <typename LIQT>
@@ -191,12 +202,17 @@ __aicore__ inline void LIQMatmul<LIQT>::ProcessQk(uint64_t s1gL0RealSize, uint64
 {
     if (mmInfo.s1gL0LoopId == 0) {
         WaitFlag<HardEvent::MTE1_MTE2>(KEY_MTE1_MTE2_EVENT + keyL1BufIdx_ % DOUBLE_BUF_NUM);
-        KeyNd2NzForPA(mmInfo.s2L0RealSize, runInfo.s2Idx * constInfo_.s2BaseSize + mmInfo.s2GmOffset, runInfo);
+        if constexpr (K_LAYOUT_T == LI_LAYOUT::PA_BSND) {
+            KeyNd2NzForPA(mmInfo.s2L0RealSize, runInfo.s2Idx * constInfo_.s2BaseSize + mmInfo.s2GmOffset, runInfo);
+        } else {
+            KeyNd2Nz(mmInfo.s2L0RealSize, mmInfo, runInfo);
+        }
+        
         SetFlag<HardEvent::MTE2_MTE1>(MTE2_MTE1_EVENT);
         WaitFlag<HardEvent::MTE2_MTE1>(MTE2_MTE1_EVENT);
     }
 
-    WaitFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + l0BufIdx_ % DOUBLE_BUF_NUM);
+    WaitFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + l0BufIdx_ % L0AB_BUF_NUM);
     LoadQueryToL0a(s1gL1Offset, runInfo.actMBaseSize, s1gL0RealSize);
     LoadKeyToL0b(mmInfo.s2L0RealSize);
 
@@ -205,13 +221,14 @@ __aicore__ inline void LIQMatmul<LIQT>::ProcessQk(uint64_t s1gL0RealSize, uint64
         keyL1BufIdx_++;
     }
 
-    WaitFlag<HardEvent::FIX_M>(FIX_M_EVENT + l0BufIdx_ % DOUBLE_BUF_NUM);
+    WaitFlag<HardEvent::FIX_M>(FIX_M_EVENT + l0cBufIdx_ % DOUBLE_BUF_NUM);
     ComputeQk(s1gL0RealSize, mmInfo.s2L0RealSize);
-    SetFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + l0BufIdx_ % DOUBLE_BUF_NUM);
+    SetFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + l0BufIdx_ % L0AB_BUF_NUM);
 
     FixpSToL1(s1gL0RealSize, mmInfo.s2L0RealSize);
-    SetFlag<HardEvent::FIX_M>(FIX_M_EVENT + l0BufIdx_ % DOUBLE_BUF_NUM);
+    SetFlag<HardEvent::FIX_M>(FIX_M_EVENT + l0cBufIdx_ % DOUBLE_BUF_NUM);
     l0BufIdx_++;
+    l0cBufIdx_++;
 }
 
 template <typename LIQT>
@@ -246,6 +263,16 @@ __aicore__ inline void LIQMatmul<LIQT>::ComputeMm1(const LIQCommon::RunInfo &run
     int64_t s1gL0RealSize[2] = {s1L0LoopCnt > 1 ? static_cast<int64_t>(S1G_BASIC_BLOCK_L0) : runInfo.actMBaseSize,
                                 runInfo.actMBaseSize - s1gL1Offset[1]};
     MmInfo mmInfo[2];
+    CalcMmInfo(mmInfo[loopIdx & 1], loopIdx, s1L0LoopCnt, mmInfo[(loopIdx + 1) & 1], runInfo);
+
+    ProcessQk(s1gL0RealSize[mmInfo[loopIdx & 1].s1gL0LoopId % s1L0LoopCnt],
+                s1gL1Offset[mmInfo[loopIdx & 1].s1gL0LoopId % s1L0LoopCnt], s1L0LoopCnt, mmInfo[loopIdx & 1],
+                runInfo);
+
+    SetFlag<HardEvent::FIX_MTE1>(FIX_MTE1_EVENT + sL1BufIdx_ % DOUBLE_BUF_NUM);
+    sL1BufIdx_++;
+    loopIdx++;
+
     while (loopIdx < s2L0LoopCnt * s1L0LoopCnt) {
         CalcMmInfo(mmInfo[loopIdx & 1], loopIdx, s1L0LoopCnt, mmInfo[(loopIdx + 1) & 1], runInfo);
 
@@ -256,13 +283,11 @@ __aicore__ inline void LIQMatmul<LIQT>::ComputeMm1(const LIQCommon::RunInfo &run
         SetFlag<HardEvent::FIX_MTE1>(FIX_MTE1_EVENT + sL1BufIdx_ % DOUBLE_BUF_NUM);
         sL1BufIdx_++;
 
-        if (loopIdx > 0) {
-            WaitFlag<HardEvent::FIX_MTE1>(FIX_MTE1_EVENT + sL1BufIdx_ % DOUBLE_BUF_NUM);
+        WaitFlag<HardEvent::FIX_MTE1>(FIX_MTE1_EVENT + sL1BufIdx_ % DOUBLE_BUF_NUM);
 
-            ProcessWs(s1gL0RealSize[mmInfo[(loopIdx + 1) & 1].s1gL0LoopId % s1L0LoopCnt],
-                      s1gL1Offset[mmInfo[(loopIdx + 1) & 1].s1gL0LoopId % s1L0LoopCnt], sL1BufIdx_,
-                      mmInfo[(loopIdx + 1) & 1], runInfo);
-        }
+        ProcessWs(s1gL0RealSize[mmInfo[(loopIdx + 1) & 1].s1gL0LoopId % s1L0LoopCnt],
+                    s1gL1Offset[mmInfo[(loopIdx + 1) & 1].s1gL0LoopId % s1L0LoopCnt], sL1BufIdx_,
+                    mmInfo[(loopIdx + 1) & 1], runInfo);
         loopIdx++;
     }
 
@@ -302,11 +327,33 @@ __aicore__ inline void LIQMatmul<LIQT>::KeyNd2NzForPA(uint64_t s2L1RealSize, uin
         nd2nzPara.dstNzNStride = 1;
         nd2nzPara.srcNdMatrixStride = 0;
         nd2nzPara.dstNzMatrixStride = 0;
-        DataCopy(keyL1_[(keyL1BufIdx_ % DOUBLE_BUF_NUM) * KEY_BUFFER_OFFSET + s2L1Offset * BLOCK_CUBE],
+        DataCopy(keyL1_[(keyL1BufIdx_ % DOUBLE_BUF_NUM) * KEY_BUFFER_OFFSET + s2L1Offset * S8_BLOCK_CUBE],
                  keyGm_[keyGmOffset], nd2nzPara);
 
         s2L1Offset += s2Mte2Size;
     }
+}
+
+template <typename LIQT>
+__aicore__ inline void LIQMatmul<LIQT>::KeyNd2Nz(uint64_t s2L1RealSize, const MmInfo &mmInfo,
+                                                 const LIQCommon::RunInfo &runInfo)
+{
+    uint64_t dStride = constInfo_.headDim;
+    if constexpr (K_LAYOUT_T == LI_LAYOUT::BSND || K_LAYOUT_T == LI_LAYOUT::TND) {
+        dStride = constInfo_.headDim * constInfo_.kHeadNum; // constInfo_.kHeadNum
+    }
+    Nd2NzParams nd2nzPara;
+    nd2nzPara.ndNum = 1;
+    nd2nzPara.nValue = s2L1RealSize;  // 行数
+    nd2nzPara.dValue = constInfo_.headDim;
+    nd2nzPara.srcDValue = dStride;
+    nd2nzPara.dstNzC0Stride = CeilAlign(s2L1RealSize, (uint64_t)BLOCK_CUBE);  // 对齐到16 单位block
+    nd2nzPara.dstNzNStride = 1;
+    nd2nzPara.srcNdMatrixStride = 0;
+    nd2nzPara.dstNzMatrixStride = 0;
+    // 默认一块buf最多放两份
+    DataCopy(keyL1_[(keyL1BufIdx_ % DOUBLE_BUF_NUM) * KEY_BUFFER_OFFSET],
+             keyGm_[runInfo.tensorKeyOffset + mmInfo.s2GmOffset * constInfo_.headDim], nd2nzPara);
 }
 
 // batch, s1, g, 1
@@ -319,7 +366,7 @@ __aicore__ inline void LIQMatmul<LIQT>::WeightDmaCopy(uint64_t s1gL1RealSize, co
     copyInParams.srcStride = 0;
     copyInParams.dstStride = 0;
     DataCopy(weightL1_[(qwL1Mte2BufIdx_ % DOUBLE_BUF_NUM) * WEIGHT_BUFFER_OFFSET],
-             weightGm_[runInfo.loop % 2 * BLOCK_CUBE * constInfo_.mBaseSize], copyInParams);
+             weightGm_[runInfo.loop % DOUBLE_BUF_NUM * BLOCK_CUBE * constInfo_.mBaseSize], copyInParams);
 }
 
 // batch, s1, n2, g, d
@@ -372,14 +419,15 @@ __aicore__ inline void LIQMatmul<LIQT>::LoadQueryToL0a(uint64_t s1gL1Offset, uin
     loadData3DParams.enTranspose = 0;
     loadData3DParams.fMatrixCtrl = 0;
 
-    LoadData<Q_T, LOAD3DV2_CONFIG>(l0a_[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0AB_BUFFER_OFFSET_S8_32K],
+    LoadData<Q_T, LOAD3DV2_CONFIG>(l0a_[(l0BufIdx_ % L0AB_BUF_NUM) * L0AB_BUFFER_OFFSET_S8_16K],
                                    queryL1_[(qwL1Mte2BufIdx_ % DOUBLE_BUF_NUM) * QUERY_BUFFER_OFFSET],
                                    loadData3DParams);
 }
 
 // s1, g, s2  -->  2 * 64* 128
 template <typename LIQT>
-__aicore__ inline void LIQMatmul<LIQT>::LoadSToL0b(uint64_t s1gL1RealSize, uint64_t s2L0RealSize, uint64_t sL1BufIdx)
+__aicore__ inline void LIQMatmul<LIQT>::LoadSToL0b(uint64_t s1gL1RealSize, uint64_t s2L0RealSize, uint64_t sL1BufIdx,
+                                                   int64_t mStartPt)
 {
     LoadData3DParamsV2<half> loadData3DParams;
     // SetFmatrixParams
@@ -404,30 +452,27 @@ __aicore__ inline void LIQMatmul<LIQT>::LoadSToL0b(uint64_t s1gL1RealSize, uint6
     loadData3DParams.filterSizeH = (1 >> 8) & 255;
     loadData3DParams.dilationFilterW = 1;
     loadData3DParams.dilationFilterH = 1;
-    loadData3DParams.enTranspose = 1;  // todo确认ok
+    loadData3DParams.enTranspose = 1;
     loadData3DParams.fMatrixCtrl = 0;
 
-    for (int64_t mStartPt = 0; mStartPt < s1gL1RealSize; mStartPt += constInfo_.gSize) {
-        loadData3DParams.mStartPt = mStartPt;
-        LoadData<half, LOAD3DV2_CONFIG>(
-            l0b_.template ReinterpretCast<half>()[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0AB_BUFFER_OFFSET_FP16_32K +
-                                                  mStartPt * S2_BASIC_BLOCK_L0],
-            sL1_[(sL1BufIdx % DOUBLE_BUF_NUM) * SL1_BUFFER_OFFSET], loadData3DParams);
-    }
+    loadData3DParams.mStartPt = mStartPt;
+    LoadData<half, LOAD3DV2_CONFIG>(
+        l0b_.template ReinterpretCast<half>()[(l0BufIdx_ % L0AB_BUF_NUM) * L0AB_BUFFER_OFFSET_FP16_16K],
+        sL1_[(sL1BufIdx % DOUBLE_BUF_NUM) * SL1_BUFFER_OFFSET], loadData3DParams);
 }
 
 // s1,g,1(16), 2,64,16
 template <typename LIQT>
-__aicore__ inline void LIQMatmul<LIQT>::LoadWeightToL0a(uint64_t s1gL0RealSize, uint64_t s1gL1Offset)
+__aicore__ inline void LIQMatmul<LIQT>::LoadWeightToL0a(uint64_t s1gL1Offset)
 {
     LoadData2DParams loadData2DParams;
     loadData2DParams.startIndex = 0;
-    loadData2DParams.repeatTimes = CeilDiv(s1gL0RealSize, BLOCK_CUBE);
+    loadData2DParams.repeatTimes = CeilDiv(constInfo_.gSize, BLOCK_CUBE);
     loadData2DParams.srcStride = 1;
     loadData2DParams.dstGap = 0;
     loadData2DParams.ifTranspose = true;
-    LoadData(l0a_.template ReinterpretCast<half>()[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0AB_BUFFER_OFFSET_FP16_32K],
-             weightL1_[(qwL1Mte2BufIdx_ % DOUBLE_BUF_NUM) * WEIGHT_BUFFER_OFFSET + s1gL1Offset * BLOCK_CUBE],
+    LoadData(l0a_.template ReinterpretCast<half>()[(l0BufIdx_ % L0AB_BUF_NUM) * L0AB_BUFFER_OFFSET_FP16_16K],
+             weightL1_[(qwL1Mte2BufIdx_ % DOUBLE_BUF_NUM) * WEIGHT_BUFFER_OFFSET + s1gL1Offset* BLOCK_CUBE],
              loadData2DParams);
 }
 
@@ -437,17 +482,17 @@ __aicore__ inline void LIQMatmul<LIQT>::LoadKeyToL0b(uint64_t s2L0RealSize)
 {
     LoadData2DParams loadData2DParams;
     loadData2DParams.startIndex = 0;
-    loadData2DParams.repeatTimes = CeilDiv(s2L0RealSize, BLOCK_CUBE) * CeilDiv(constInfo_.headDim, 2 * BLOCK_CUBE);
+    loadData2DParams.repeatTimes = CeilDiv(s2L0RealSize, BLOCK_CUBE) * CeilDiv(constInfo_.headDim, S8_BLOCK_CUBE);
     loadData2DParams.srcStride = 1;
     loadData2DParams.dstGap = 0;
     loadData2DParams.ifTranspose = false;
-    LoadData(l0b_[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0AB_BUFFER_OFFSET_S8_32K],
+    LoadData(l0b_[(l0BufIdx_ % L0AB_BUF_NUM) * L0AB_BUFFER_OFFSET_S8_16K],
              keyL1_[(keyL1BufIdx_ % DOUBLE_BUF_NUM) * KEY_BUFFER_OFFSET], loadData2DParams);
 }
 
 // A: s1,g,1(16) B: s1,g,s2  C: s1, 1(16), s2
 template <typename LIQT>
-__aicore__ inline void LIQMatmul<LIQT>::ComputeWs(uint64_t s1gL0RealSize, uint64_t s2L0RealSize)
+__aicore__ inline void LIQMatmul<LIQT>::ComputeWs(uint64_t s1gL0RealSize, uint64_t s2L0RealSize, int64_t s1gOffset)
 {
     SetFlag<HardEvent::MTE1_M>(MTE1_M_EVENT);
     WaitFlag<HardEvent::MTE1_M>(MTE1_M_EVENT);
@@ -457,15 +502,11 @@ __aicore__ inline void LIQMatmul<LIQT>::ComputeWs(uint64_t s1gL0RealSize, uint64
     mmadParams.k = constInfo_.gSize;
     mmadParams.cmatrixInitVal = true;
     mmadParams.cmatrixSource = false;
-    for (int64_t s1gOffset = 0; s1gOffset < s1gL0RealSize; s1gOffset += constInfo_.gSize) {
-        Mmad(cL0_.template ReinterpretCast<float>()[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0C_BUFFER_OFFSET +
-                                                    s1gOffset * S2_BASIC_BLOCK_L0],
-             l0a_.template ReinterpretCast<half>()[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0AB_BUFFER_OFFSET_FP16_32K +
-                                                   s1gOffset * BLOCK_CUBE],
-             l0b_.template ReinterpretCast<half>()[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0AB_BUFFER_OFFSET_FP16_32K +
-                                                   s1gOffset * S2_BASIC_BLOCK_L0],
-             mmadParams);
-    }
+    Mmad(cL0_.template ReinterpretCast<float>()[(l0cBufIdx_ % DOUBLE_BUF_NUM) * L0C_BUFFER_OFFSET +
+                                                s1gOffset * S2_BASIC_BLOCK_L0],
+            l0a_.template ReinterpretCast<half>()[(l0BufIdx_ % L0AB_BUF_NUM) * L0AB_BUFFER_OFFSET_FP16_16K],
+            l0b_.template ReinterpretCast<half>()[(l0BufIdx_ % L0AB_BUF_NUM) * L0AB_BUFFER_OFFSET_FP16_16K],
+            mmadParams);
 }
 
 template <typename LIQT>
@@ -480,9 +521,9 @@ __aicore__ inline void LIQMatmul<LIQT>::ComputeQk(uint64_t s1gL0RealSize, uint64
     mmadParams.k = constInfo_.headDim;
     mmadParams.cmatrixInitVal = true;
     mmadParams.cmatrixSource = false;
-    Mmad(cL0_[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0C_BUFFER_OFFSET],
-         l0a_[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0AB_BUFFER_OFFSET_S8_32K],
-         l0b_[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0AB_BUFFER_OFFSET_S8_32K], mmadParams);
+    Mmad(cL0_[(l0cBufIdx_ % DOUBLE_BUF_NUM) * L0C_BUFFER_OFFSET],
+         l0a_[(l0BufIdx_ % L0AB_BUF_NUM) * L0AB_BUFFER_OFFSET_S8_16K],
+         l0b_[(l0BufIdx_ % L0AB_BUF_NUM) * L0AB_BUFFER_OFFSET_S8_16K], mmadParams);
     if ((mmadParams.m / 16) * (mmadParams.n / 16) < 10) {
         PipeBarrier<PIPE_M>();
     }
@@ -504,7 +545,7 @@ __aicore__ inline void LIQMatmul<LIQT>::FixpSToL1(uint64_t s1gL0RealSize, uint64
     params.nz2ndEn = 0;
     SetFixpipePreQuantFlag(0x3a800000);
     DataCopy(sL1_[(sL1BufIdx_ % DOUBLE_BUF_NUM) * SL1_BUFFER_OFFSET],
-             cL0_[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0C_BUFFER_OFFSET], params);
+             cL0_[(l0cBufIdx_ % DOUBLE_BUF_NUM) * L0C_BUFFER_OFFSET], params);
 }
 
 template <typename LIQT>
@@ -527,14 +568,13 @@ __aicore__ inline void LIQMatmul<LIQT>::FixpResToGm(uint64_t s1L0RealCount, uint
                                  2048);
     AscendC::DataCopy(mm1ResGm_[(runInfo.loop % 2) * constInfo_.mBaseSize / constInfo_.gSize * constInfo_.s2BaseSize +
                                 s1GmOffset * intriParams.dstStride + s2GmOffset],
-                      cL0_.template ReinterpretCast<float>()[(l0BufIdx_ % DOUBLE_BUF_NUM) * L0C_BUFFER_OFFSET],
+                      cL0_.template ReinterpretCast<float>()[(l0cBufIdx_ % DOUBLE_BUF_NUM) * L0C_BUFFER_OFFSET],
                       intriParams);
 }
 
 template <typename LIQT>
 __aicore__ inline void LIQMatmul<LIQT>::AllocEventID()
 {
-    SetMMLayoutTransform(true);
     SetFlag<HardEvent::MTE1_MTE2>(KEY_MTE1_MTE2_EVENT + 0);
     SetFlag<HardEvent::MTE1_MTE2>(KEY_MTE1_MTE2_EVENT + 1);
     SetFlag<HardEvent::MTE1_MTE2>(KEY_MTE1_MTE2_EVENT + 2);
@@ -544,6 +584,8 @@ __aicore__ inline void LIQMatmul<LIQT>::AllocEventID()
 
     SetFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + 0);
     SetFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + 1);
+    SetFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + 2);
+    SetFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + 3);
 
     SetFlag<HardEvent::FIX_M>(FIX_M_EVENT + 0);
     SetFlag<HardEvent::FIX_M>(FIX_M_EVENT + 1);
@@ -552,7 +594,6 @@ __aicore__ inline void LIQMatmul<LIQT>::AllocEventID()
 template <typename LIQT>
 __aicore__ inline void LIQMatmul<LIQT>::FreeEventID()
 {
-    SetMMLayoutTransform(false);
     WaitFlag<HardEvent::MTE1_MTE2>(KEY_MTE1_MTE2_EVENT + 0);
     WaitFlag<HardEvent::MTE1_MTE2>(KEY_MTE1_MTE2_EVENT + 1);
     WaitFlag<HardEvent::MTE1_MTE2>(KEY_MTE1_MTE2_EVENT + 2);
@@ -562,6 +603,8 @@ __aicore__ inline void LIQMatmul<LIQT>::FreeEventID()
 
     WaitFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + 0);
     WaitFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + 1);
+    WaitFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + 2);
+    WaitFlag<HardEvent::M_MTE1>(M_MTE1_EVENT + 3);
 
     WaitFlag<HardEvent::FIX_M>(FIX_M_EVENT + 0);
     WaitFlag<HardEvent::FIX_M>(FIX_M_EVENT + 1);

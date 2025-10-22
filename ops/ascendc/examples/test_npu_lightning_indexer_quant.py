@@ -119,6 +119,7 @@ def _compare_res(golden_res, npu_res, ratio_thress_hold=0.999):
     diff_res = npu_res - golden_res
     match_ratio = (diff_res == 0).sum().float() / total_res_num
     if match_ratio >= ratio_thress_hold:
+        print(f"Compare npu cpu res success! Match ratio is {match_ratio:.4%}")
         return True
     else:
         print(f"Match ratio {match_ratio:.4%} is under thress_hold {ratio_thress_hold} ",
@@ -136,7 +137,7 @@ class LIQuantNetwork(nn.Module):
 
     def forward(self, query, key, weights, query_dequant_scale, key_dequant_scale, actual_seq_lengths_query=None, 
                 actual_seq_lengths_key=None, block_table=None, query_quant_mode=0, key_quant_mode=0,
-                layout_query='BSND', layout_key='PA_BSND', sparse_count=2048, sparse_mode=3):
+                layout_query='BSND', layout_key='BSND', sparse_count=2048, sparse_mode=3):
 
         out = torch_npu.npu_lightning_indexer_quant(query, key, weights, query_dequant_scale, key_dequant_scale,
                                                     actual_seq_lengths_query=actual_seq_lengths_query,
@@ -195,7 +196,8 @@ class TestCustomLightningIndexerQuant(TestCase):
 
         return npu_out
 
-    def lightning_indexer_quant_result(self, layout_query, b, t, s1, s2, act_seq_q, act_seq_k, sparse_mode):
+    def lightning_indexer_quant_result(self, layout_query, b, t, s1, s2, act_seq_q, act_seq_k, sparse_mode,
+                                       sparse_count = 2048):
         # -----固定参数--------
         n1 = 64
         n2 = 1
@@ -204,25 +206,30 @@ class TestCustomLightningIndexerQuant(TestCase):
         layout_key = 'PA_BSND'
         query_quant_mode = 0
         key_quant_mode = 0
-        sparse_count = 2048
         np.random.seed(0)
         # -------------
-        block_table = torch.tensor([range(b * s2//block_size)], dtype = torch.int32).reshape(b, -1)
-        key = torch.tensor(np.random.uniform(-128, 127, (b * (s2 // block_size), block_size, n2, d))).to(torch.int8)
-        key_dequant_scale = torch.tensor(np.random.uniform(0, 10, (b * (s2 // block_size), block_size, n2)))
+        max_block_table_num = (s2 + block_size - 1) // block_size
+        block_table = torch.tensor([range(b * max_block_table_num)], dtype = torch.int32).reshape(b, -1)
+        key = torch.tensor(np.random.uniform(-128, 127, (b * max_block_table_num, block_size, n2, d))).to(torch.int8)
+        key_dequant_scale = torch.tensor(np.random.uniform(0, 10, (b * max_block_table_num, block_size, n2)))
         key_dequant_scale = key_dequant_scale.to(torch.float16)
         if layout_query == 'BSND':
             query = torch.tensor(np.random.uniform(-128, 127, (b, s1, n1, d))).to(torch.int8)
             query_dequant_scale = torch.tensor(np.random.uniform(0, 10, (b, s1, n1))).to(torch.float16)
-            weights = torch.tensor(np.random.uniform(0, 0.01, (b, s1, n1, 1))).to(torch.float16)
-            actual_seq_lengths_query = torch.tensor(np.random.uniform(s1, s1, (b))).to(torch.int32)
-            actual_seq_lengths_key = torch.tensor(np.random.uniform(s2, s2, (b))).to(torch.int32)
+            weights = torch.tensor(np.random.uniform(0, 0.01, (b, s1, n1))).to(torch.float16)
+            actual_seq_lengths_query = torch.tensor(np.random.uniform(s1, s1, (b))).to(torch.int32) \
+                                       if act_seq_q is None else torch.tensor(act_seq_q).to(torch.int32)
+            actual_seq_lengths_key = torch.tensor(np.random.uniform(s2, s2, (b))).to(torch.int32) \
+                                       if act_seq_k is None else torch.tensor(act_seq_k).to(torch.int32)
+            print(f"------- test LIQuant BSND case b:{b} s1:{s1} s2:{s2} sparse_mode:{sparse_mode} ----------")
         else:
             query = torch.tensor(np.random.uniform(-128, 127, (t, n1, d))).to(torch.int8)
             query_dequant_scale = torch.tensor(np.random.uniform(0, 10, (t, n1))).to(torch.float16)
-            weights = torch.tensor(np.random.uniform(0, 0.01, (t, n1, 1))).to(torch.float16)
+            weights = torch.tensor(np.random.uniform(0, 0.01, (t, n1))).to(torch.float16)
             actual_seq_lengths_query = torch.tensor(act_seq_q).to(torch.int32)
             actual_seq_lengths_key = torch.tensor(act_seq_k).to(torch.int32)
+            print(f"------- test LIQuant TND case b:{b} t:{t} s2:{s2} act_seq_q:{act_seq_q} act_seq_k:{act_seq_k} ",
+                  f"sparse_mode:{sparse_mode} -------")
 
         cpu_out = self.cpu_op_exec(query, key, weights, query_dequant_scale, key_dequant_scale,
                                    actual_seq_lengths_query, actual_seq_lengths_key, block_table,
@@ -237,20 +244,18 @@ class TestCustomLightningIndexerQuant(TestCase):
         actual_seq_lengths_query = actual_seq_lengths_query.to("npu:%s" % DEVICE_ID)
         actual_seq_lengths_key = actual_seq_lengths_key.to("npu:%s" % DEVICE_ID)
         block_table = block_table.to("npu:%s" % DEVICE_ID)
-        print(f'======================== PTA eager BEGIN ========================')
+        print("run eager mode")
         npu_eager_out = self.npu_op_exec_eager(query, key, weights, query_dequant_scale, key_dequant_scale,
                                                actual_seq_lengths_query, actual_seq_lengths_key, block_table,
                                                query_quant_mode, key_quant_mode,
                                                layout_query, layout_key, sparse_count, sparse_mode)
-        print(f'======================== PTA eager FINISH ========================')
         assert(_compare_res(cpu_out, npu_eager_out))
 
-        print(f'======================== PTA graph BEGIN ========================')
+        print("run graph mode")
         npu_graph_out = self.npu_op_exec_graph(query, key, weights, query_dequant_scale, key_dequant_scale,
                                                actual_seq_lengths_query, actual_seq_lengths_key, block_table,
                                                query_quant_mode, key_quant_mode,
                                                layout_query, layout_key, sparse_count, sparse_mode)
-        print(f'======================== PTA graph FINISH ========================')
         assert(_compare_res(cpu_out, npu_graph_out))
 
     def test_lightning_indexer_quant(self):
@@ -261,10 +266,12 @@ class TestCustomLightningIndexerQuant(TestCase):
             ("BSND", 24, None, 4, 512, None, None, 3),
             ("BSND", 24, None, 4, 8192, None, None, 0),
             ("BSND", 24, None, 4, 8192, None, None, 3),
+            ("BSND", 4, None, 576, 1449, None, [27,27,27,1449], 0, 1302),
             # TND case s1 可填None
             ("TND", 1, 4, None, 8192, [4], [2176], 3),
             ("TND", 1, 4, None, 8192, [4], [2304], 3),
             ("TND", 1, 2, None, 66048, [2], [65529], 3),
+            ("TND", 2, 33, None, 512, [26,33], [0,165], 0, 1325),
         ]
         for case in test_case_list:
             self.lightning_indexer_quant_result(*case)

@@ -51,12 +51,12 @@ custom.npu_sparse_flash_attention(Tensor query, Tensor key, Tensor value, Tensor
     
 -   **key\_rope**（`Tensor`）：可选参数，表示MLA结构中的key的rope信息，不支持非连续，数据格式支持ND,数据类型支持`bfloat16`。
 
--   **layout\_query**（`str`）：可选参数，用于标识输入`query`的数据排布格式，用户不特意指定时可传入默认值"BSND"，支持传入BSND和TND。
+-   **layout\_query**（`str`）：可选参数，用于标识输入`query`的数据排布格式，用户不特意指定时可传入默认值"BSND"，支持传入TND、BSND和TND。
 
     >**说明**：
        >1、query数据排布格式支持从多种维度解读，其中B（Batch）表示输入样本批量大小、S（Seq-Length）表示输入样本序列长度、H（Head-Size）表示hidden层的大小、N（Head-Num）表示多头数、D（Head-Dim）表示hidden层最小的单元尺寸，且满足D=H/N、T表示所有Batch输入样本序列长度的累加和。
 
--   **layout\_kv**（`str`）：可选参数，用于标识输入`key`的数据排布格式，用户不特意指定时可传入默认值"BSND"，支持传入BSND和PA\_BSND，其中PA\_BSND在使能PageAttention时使用。
+-   **layout\_kv**（`str`）：可选参数，用于标识输入`key`的数据排布格式，用户不特意指定时可传入默认值"BSND"，支持传入TND、BSND和PA\_BSND，其中PA\_BSND在使能PageAttention时使用。
 
 -   **sparse\_mode**（`int`）：可选参数，表示sparse的模式。数据类型支持`int32`。
     -   sparse\_mode为0时，代表全部计算。
