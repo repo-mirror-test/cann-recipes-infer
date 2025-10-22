@@ -3,7 +3,7 @@
 
 面向 DeepSeek-V3.2-Exp 架构，本次发布两个全新的融合算子：`LightningIndexer` (LI) 以及`SparseFlashAttention` (SFA)。其中`LightningIndexer`算子是本次 DeepSeek 新架构中最特别的部分之一，用于对重要的上下文进行稀疏选择，当前 Top-$k$ 计算已经融入`LightningIndexer`算子，相较于 Top-$k$ 外置收益大约20%；`SparseFlashAttention`则是针对稀疏 Attention 场景进行了特殊优化的 Attention 算子。
 
-A3中的 Cube 核与 Vector 核数比为 $1:2$，每1个 Cube 核与2个 Vector 核构成一个组核 (一个 AICore)，其中一个组核的结构如下图所示，其中 L1、L0A、L0B、L0C 为 Cube 核的片上 Buffer，UB 为 Vector 核的片上 Buffer。
+A3 中的 Cube 核与 Vector 核数比为 $1:2$，每1个 Cube 核与2个 Vector 核构成一个组核 (一个 AICore)，其中一个组核的结构如下图所示，其中 L1、L0A、L0B、L0C 为 Cube 核的片上 Buffer，UB 为 Vector 核的片上 Buffer。具体介绍可参考：[基本架构](https://www.hiascend.com/document/detail/zh/canncommercial/82RC1/opdevg/Ascendcopdevg/atlas_ascendc_10_0008.html#ZH-CN_TOPIC_0000002336176974__section349312501823)。
 
 <div align="center">
     <img src="./figures/framework.png" width="950" />
@@ -19,21 +19,26 @@ A3中的 Cube 核与 Vector 核数比为 $1:2$，每1个 Cube 核与2个 Vector 
 - 充分利用硬件特性，基于 Ascend C API 高效实现
 - 聚合访存，减少指令下发，提高离散访存性能
 - 算子开发及调测的易用性提升
+- `LightningIndexerQuant`量化支持，Mat-Duce 算法充分利用 Cube 核
 
 ## Outline
 
-- [LightningIndexer](#lightningindexer)
+- [NPU DeepSeek-V3.2-Exp Ascend C 融合算子优化](#npu-deepseek-v32-exp-ascend-c-融合算子优化)
+  - [Highlights](#highlights)
+  - [Outline](#outline)
+  - [LightningIndexer](#lightningindexer)
     - [LI 算子 Tiling 设计](#li-算子-tiling-设计)
     - [LI Pipeline 设计](#li-pipeline-设计)
     - [ReLU 随路实现](#relu-随路实现)
-    - [Top-$k$ 指令实现](#top-kkk-指令实现)
-    - [LI Next Feature](#li-next-feature)
-- [SparseFlashAttention](#sparseflashattention)
+    - [Top-k 指令实现](#top-k-指令实现)
+    - [LI 量化支持](#li-量化支持)
+      - [Mat-Duce 算法](#mat-duce-算法)
+  - [SparseFlashAttention](#sparseflashattention)
     - [SFA 算子 Tiling 设计](#sfa-算子-tiling-设计)
     - [SFA Pipeline 设计](#sfa-pipeline-设计)
     - [访存优化](#访存优化)
     - [SFA Next Feature](#sfa-next-feature)
-- [易用性提升](#易用性提升)
+  - [易用性提升](#易用性提升)
     - [TilingKey 模板化](#tilingkey-模板化)
     - [分核计算下沉](#分核计算下沉)
     
@@ -46,11 +51,11 @@ $$
 $$
 
 可拆分为如下计算流程：
-1. 计算矩阵乘法：$S = Q_{index}@K_{index}^T$
-2. 计算激活函数：$S'=\text{ReLU}(S)$
-3. 计算广播乘法：$S_W=(W@[1]_{1\times S_{k}})\odot S'$
-4. 沿G轴进行Reduce操作：$Score=[1]_{1\times g}@ S_W$
-5. 对 $Score$ 进行 $\text{Top-}k$ 计算，即获取数值排序前 $k$ 个的结果，并返回其对应的 Index
+1. 计算矩阵乘法：$S = Q_{index}@K_{index}^T$；
+2. 计算激活函数：$S'=\text{ReLU}(S)$；
+3. 计算广播乘法：$S_W=(W@[1]_{1\times S_{k}})\odot S'$；
+4. 沿G轴进行Reduce操作：$Score=[1]_{1\times g}@ S_W$；
+5. 对 $Score$ 进行 $\text{Top-}k$ 计算，即获取数值排序前 $k$ 个的结果，并返回其对应的 Index，
 
 在 Prefill 或开启 MTP 的 Decode 场景，多个 token 对应的 $Q_{index}$ 会被合并统一计算，本文后续部分不对单/多个 token 对应的 $Q_{index}$ 加以区分。
 
@@ -64,8 +69,8 @@ $$
 
 核内 Tiling 设计采用了如下方案：
 - L1 空间划分为如下部分：
-  - $Q_{index}$ 矩阵常驻：$512\times 128\times2\text{ Bytes}=128\text{ KB}$，L1层级基本块为 $(512,128)$，在实际计算时可做更细致的搬运，即一次只搬运$(256,128)$大小的数据到L1以降低搬运头开销
-  - $K_{index}$ 矩阵 3-Buffer 循环复用：$3\times256\times 128\times2\text{ Bytes}=192\text{ KB}$，L1层级基本块为 $(256,128)$
+  - $Q_{index}$ 矩阵常驻：$512\times 128\times2\text{ Bytes}=128\text{ KB}$，L1层级基本块为 $(512,128)$，在实际计算时可做更细致的搬运，即一次只搬运$(256,128)$大小的数据到L1以降低搬运头开销；
+  - $K_{index}$ 矩阵 3-Buffer 循环复用：$3\times256\times 128\times2\text{ Bytes}=192\text{ KB}$，L1层级基本块为 $(256,128)$。
 - L0A，L0B，L0C 使能 Double Buffer，分别划分为$2\times32\text{ KB},2\times32\text{ KB},2\times64\text{ KB}$，一次搬入 L0A 和 L0B 的矩阵块大小都为$(128,128)$，这是一种对昇腾硬件较为亲和的设置，可以提高算力利用率。
 
 这样的方式可以保证在计算过程中 $Q_{index}$ 只需要搬运一次，并且降低 $K_{index}$ 矩阵的重复搬运次数：假设 $Q_{index}$ 矩阵 L1 层级基本块大小为 $(128,128)$，而行方向总的 token 数为 $S_q$，那么 $K_{index}$ 矩阵需要重复搬运 $\lceil S_q/128\rceil$ 次；选取基本块大小为 $(512,128)$ 可将重复搬运次数降低到 $\lceil S_q/512\rceil$。由于第一个计算过程矩阵乘的启动需要右矩阵的搬运，为右矩阵分配多块 Buffer 可消除计算流程因为 Buffer 占用造成的阻塞，所以为 $K_{index}$ 分配 3-Buffer 可以提升带宽爬坡期的搬运效率。
@@ -83,11 +88,11 @@ $$
 
 `LightningIndexer`首先需要进行矩阵乘法，并对结果进行ReLU计算。由于矩阵乘法和 ReLU 计算分别发生在不同的计算单元，朴素的实现需要将矩阵乘法的结果从 Cube 核搬运至 Vector 核进行。而昇腾NPU上 Cube 核的 FixP 组件提供随路 ReLU 能力，即可以在矩阵乘法完成之后直接在数据搬运的过程中随路完成 ReLU 操作，不需要显式进行 ReLU 计算。除 ReLU 之外，FixP 组件还有更多强大功能，具体可参考[基础API: FixP相关](https://www.hiascend.com/document/detail/zh/canncommercial/82RC1/API/ascendcopapi/atlasascendc_api_07_0251.html)。
 
-### Top-$k$ 指令实现
+### Top-k 指令实现
 
 `LightningIndexer`融合算子的核心是在长达数十万的序列中，为每个 token 高效地筛选出分数最高的 $k$（例如2048）个索引。同时，对于算子而言，Top-$k$ 的计算必须是准确无误的，不能采用近似算法求解。
 
-当前的实现方案基于昇腾支持的排序指令进行全量排序，top-$k$ 计算方案过程分为三步：  
+当前的实现方案基于昇腾支持的排序指令进行全量排序，Top-$k$ 计算方案过程分为三步：  
 - **分组排序**：通过`VBS32`指令将每32个 token 按照其 $Score$ 进行稳定降序排列，输出其排序向量以及对应索引向量，直到将整个序列的 token 分组排序完毕。  
 
 <div align="center">
@@ -105,13 +110,47 @@ $$
     <img src="./figures/topkstep3.png" width="600" />
 </div>
 
-假设上下文长度为 $S_k$ ，**分组排序**与**归并**步骤的计算量为 $4S_k$。**规约**步骤的计算量无法精确评估，采用正态分布结合蒙特卡洛法模拟，结果显示第一次的计算量接近 $4k$ ，从第二次开始，由于已经有了 $k$ 个较大数的向量参与运算，计算量开始大幅减少直到逼近耗尽极限 $k$ 。该部分计算量经过模拟分析后可表示为 $0.36S_k+3.32k$ 。因此Top-$k$ 流程总计算量 $totalCount = 4.36S_k + 3.32k$
+假设上下文长度为 $S_k$ ，**分组排序**与**归并**步骤的计算量为 $4S_k$。**规约**步骤的计算量无法精确评估，采用正态分布结合蒙特卡洛法模拟，结果显示第一次的计算量接近 $4k$ ，从第二次开始，由于已经有了 $k$ 个较大数的向量参与运算，计算量开始大幅减少直到逼近耗尽极限 $k$ 。该部分计算量经过模拟分析后可表示为 $0.36S_k+3.32k$ 。因此Top-$k$ 流程总计算量 $totalCount = 4.36S_k + 3.32k$。
 
-### LI Next Feature
+### LI 量化支持
 
-针对`LightningIndexer`算子，后续将在算法和工程上持续优化，主要的方向是：
-- `LightningIndexer`算子涉及到复杂的 Vector 计算，集中在赋权加和以及 Top-$k$ 计算，通过探索减少计算量的算法以降低耗时。
-- `LightningIndexer`算子支持量化，减少访存量并充分利用 Cube 核的强大能力进行性能优化。
+当前`LightningIndexer`算子已支持 [Per-Token-Head 量化](../../../docs/models/deepseek-v3.2-exp/deepseek_v3.2_exp_inference_guide.md) 输入，即输入的 $Q_{index}$ 和 $K_{index}$ 都被量化为 INT8 数据类型，以此应对长序列场景下显存占用过大的问题。
+
+支持量化输入的`LightningIndexerQuant`对于某个 token 对应的 Index Query $Q_{index}^{INT8}\in\R^{g\times d}$ 及其反量化系数$Scale_{Q}\in\R^{g\times1}$，给定上下文 Index Key $K_{index}^{INT8}\in\R^{S_{k}\times d}$ 及其反量化系数$Scale_{K}\in\R^{S_{k}\times1}$, $W\in\R^{g\times 1}$，其中 $g$ 为 GQA 对应的 group size，$d$ 为每一个头的维度，$S_{k}$ 是上下文的长度，`LightningIndexerQuant`的具体计算公式如下：
+$$
+\text{Top-}k\left\{[1]_{1\times g}@\left[(W@[1]_{1\times S_{k}})\odot\text{ReLU}\left(\left(Scale_Q@Scale_K^T\right)\odot\left(Q_{index}^{INT8}@{(K_{index}^{INT8})}^T\right)\right)\right]\right\}
+$$
+
+#### Mat-Duce 算法
+
+`LightningIndexerQuant`算子采用了 Mat-Duce 算法，利用数学变换调整计算逻辑，用矩阵乘法实现规约计算。该算法充分利用 A3 芯片 Cube 核的随路能力，将`LightningIndexerQuant`算子中的大部分计算都在 Cube 核内实现。
+
+由于 $Scale_Q,Scale_K\ge0$，令 $\tilde{W} = Scale_Q \odot W \in \mathbb{R}^{g\times1}$，`LightningIndexerQuant`计算公式可等价变换为：
+
+$$\text{Top-}k\left\{\tilde{W}^T @ \text{ReLU}(Q_{index}^{INT8}@(K_{index}^{INT8})^T) \odot Scale_K^T\right\}.$$
+
+对应的具体计算流程为：
+1. 预处理，在 UB 上计算 $\tilde{W} = Scale_Q \odot W$，CAST 到 FP16 写出到 GM;
+2. 在 Cube 核内计算 $S^{INT32} = Q_{index}^{INT8}@(K_{index}^{INT8})^T$，$S$ 数据类型为 INT32；
+3. 利用 FixP 的 DEQF16 指令，计算 $S^{FP16}=\text{FP16}(S^{INT32}/1024)$，将 INT32 结果与 $1/1024$ 相乘并转化为 FP16 数据类型，此处 $1/1024$ 可以防止数值溢出，且不会影响最终 Top-$k$ 的结果；
+4. 继续利用 FixP 的随路 ReLU 功能，计算 $S'=\text{ReLU}(S^{FP16})$ 并将结果搬运至 L1 以进行下一次矩阵乘法计算；
+5. 在 Cube 核内执行 $P=\tilde{W}^T@S'$， 将结果写出到 GM 上。这一步骤同时完成了关于 $Scale_Q$ 的反量化、关于 $W$ 的行方向放缩以及不同头结果的求和操作；
+6. 将  $P$ 从 GM 读入到 Vector 核内并进行关于 $Scale_K$ 的反量化，$Score = P \odot Scale_K^T$；
+7. 在 Vector 核内对 $Score$ 计算 Top-$k$。
+
+计算流程如下图所示
+<div align="center">
+    <img src="./figures/matduce_quant.png" width="600" />
+</div>
+
+
+这一方案相比标准实现方案，将大部分向量操作通过数学变换以 Cube 核实现 (步骤5)，同时充分利用了 FixP [随路量化激活搬运](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/API/ascendcopapi/atlasascendc_api_07_00130.html) 能力，将量化矩阵乘法的结果从 INT32 数据类型转化为 FP16 数据类型 (步骤3，4) 得以进行第二次半精度的矩阵乘法操作，显著提升了算子性能。
+
+
+
+
+
+
 
 ## SparseFlashAttention
 
@@ -124,10 +163,10 @@ $$
 
 
 本次公布的`SparseFlashAttention`是面向 Sparse Attention 的全新算子，针对离散访存进行了指令缩减及搬运聚合的细致优化。`SparseFlashAttention`算子沿用 [FlashAttention](https://arxiv.org/pdf/2307.08691) 的计算流程，分为四个阶段：
-- $C_1$：$Q@K^T$
-- $V_1$：online softmax
-- $C_2$：$P@V$
-- $V_2$：rescaling $O$
+- $C_1$：$Q@K^T$；
+- $V_1$：online softmax；
+- $C_2$：$P@V$；
+- $V_2$：rescaling $O$。
 
 ### SFA 算子 Tiling 设计
 
@@ -135,8 +174,8 @@ $$
 
 算子核内 Tiling 设计如下：
 - L1 空间划分为如下部分：
-  - $Q/P$ 矩阵分时复用 ($P$矩阵是softmax计算的结果)：$4\times128\times 288\times2\text{ Bytes}=288\text{ KB}$，即在一个 $C_1$ 或 $C_2$ 阶段中，左矩阵分四次搬运到 L1 中，最终在一次迭代内常驻于 L1，其中 $Q$ 矩阵每次的搬运量大小为 $(128,288)$，$P$ 矩阵每次的搬运量大小为 $(128,256)$
-  - $K/V$ 矩阵 3-Buffer 循环复用：$3\times128\times 288\times2\text{ Bytes}=216\text{ KB}$，其中$K$矩阵每次的搬运大小为$(128,288)$，$V$矩阵每次的搬运大小为$(256,128)$
+  - $Q/P$ 矩阵分时复用 ($P$矩阵是softmax计算的结果)：$4\times128\times 288\times2\text{ Bytes}=288\text{ KB}$，即在一个 $C_1$ 或 $C_2$ 阶段中，左矩阵分四次搬运到 L1 中，最终在一次迭代内常驻于 L1，其中 $Q$ 矩阵每次的搬运量大小为 $(128,288)$，$P$ 矩阵每次的搬运量大小为 $(128,256)$；
+  - $K/V$ 矩阵 3-Buffer 循环复用：$3\times128\times 288\times2\text{ Bytes}=216\text{ KB}$，其中$K$矩阵每次的搬运大小为$(128,288)$，$V$矩阵每次的搬运大小为$(256,128)$。
 - L0A，L0B，L0C使能 Double Buffer，分别划分为$2\times32\text{ KB},2\times32\text{ KB},2\times64\text{ KB}$，在 $C_1$ 阶段一次搬入 L0A 和 L0B的矩阵块大小分别为 $(128,96),(96,128)$；在 $C_2$ 阶段一次搬入 L0A 和 L0B 的矩阵块大小都为 $(128,128)$。
 
 
