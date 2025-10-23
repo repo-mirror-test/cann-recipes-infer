@@ -6,7 +6,7 @@ world_size: 128               # world_size = 2 * chip_num in A3
 model_config:
   mm_quant_mode: A8W8
   gmm_quant_mode: A8W8
-  next_n: 1
+  next_n: 3
   pa_block_size: 128
   enable_weight_nz: True
   with_ckpt: True             # [False, True]

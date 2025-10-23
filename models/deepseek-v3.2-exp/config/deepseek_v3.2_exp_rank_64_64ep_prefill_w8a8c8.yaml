@@ -6,7 +6,7 @@ world_size: 64                # world_size = 2 * chip_num in A3
 model_config:
   mm_quant_mode: A8W8
   gmm_quant_mode: A8W8
-  next_n: 1
+  next_n: 3
   pa_block_size: 128
   enable_weight_nz: True
   with_ckpt: True                   # [False, True]
@@ -25,7 +25,7 @@ data_config:
 
 parallel_config:
   cp_size: 64                 # only active at prefill stage
-  oproj_tp_size: 8
+  oproj_tp_size: 1
   attn_tp_size: 1
   dense_tp_size: 1
   moe_tp_size: 1

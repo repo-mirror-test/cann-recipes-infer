@@ -117,7 +117,7 @@ def default_weight_loader(param: torch.Tensor,
     except Exception:
         # NOTE: This exception is added for the purpose of setting breakpoint to
         # debug weight loading issues.
-        logger.error(f"deflaut weight load failed")
+        logger.error(f"default weight load failed")
 
 
 def initialize_dummy_weights(
