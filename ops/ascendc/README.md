@@ -54,7 +54,7 @@
 
 ### 获取 docker 镜像
 
-  从[ARM镜像地址](https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/cann8.3.rc1.alpha002/pt2.5.1/aarch/ascendc/cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image.tar)中下载 docker 镜像，然后上传到A3服务器上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image.tar`。
+  从[ARM镜像地址](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.3.tar)中下载 docker 镜像，然后上传到A3服务器上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.3.tar`。
 
 ### 拉起 docker 容器
 
