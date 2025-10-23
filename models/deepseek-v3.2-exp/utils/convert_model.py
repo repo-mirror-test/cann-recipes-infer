@@ -370,9 +370,9 @@ def main(fp8_path, output_path, w8a8, c8=False, clip=False, quant_param_path=Non
     if c8 or clip:
         safetensor_files = list(
             glob(os.path.join(output_path, "*.safetensors")))
-        file_name = os.path.basename(safetensor_file)
         safetensor_files.sort()
-        first_safetensor_file = safetensor_files[0]
+        first_safetensor_file = safetensor_files[-1]
+        file_name = os.path.basename(safetensor_file)
         first_safetensor_dict = load_file(first_safetensor_file, device="cpu")
 
         if c8:
