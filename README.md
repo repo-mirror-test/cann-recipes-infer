@@ -2,6 +2,7 @@
 
 ## 🚀Latest News
 - [2025/10] DeepSeek-V3.2-Exp模型支持W8A8C8量化，量化算法和推理代码已开源。
+- [2025/10] Qwen3-MoE模型在昇腾Atlas A3系列上已支持推理部署。
 - [2025/09] DeepSeek-V3.2-Exp模型在昇腾Atlas A3系列上已0day支持推理部署。
 
 
@@ -13,6 +14,7 @@ cann-recipes-infer仓库旨在针对LLM与多模态模型推理业务中的典�
 |实践|简介|
 |-----|-----|
 |[DeepSeek-V3.2-Exp](models/deepseek-v3.2-exp/README.md)|基于Transformers库，在Atlas A3环境中Prefill阶段采用了长序列亲和的CP并行策略，Decode阶段沿用大EP并行，同时从整网上设计了新的NPU融合Kernel和多流并行优化，实现了较高的吞吐推理性能。
+|[Qwen3-MoE](models/qwen3_moe/README.md)|基于Transformers库，在Atlas A3环境中完成Qwen3-235B-A22B模型的适配优化，支持TP或EP部署。
 
 
 ## 📖目录结构说明
@@ -20,6 +22,8 @@ cann-recipes-infer仓库旨在针对LLM与多模态模型推理业务中的典�
 ├── docs                                        # 文档目录
 |  ├── models                                   # 模型文档目录
 |  |  ├── deepseek-v3.2-exp                     # DeepSeek-V3.2-Exp相关文档
+|  |  ├── qwen3_moe                             # Qwen3-MoE相关文档
+|  |  └── ...
 |  └── common                                   # 公共文档目录
 ├── accelerator                                 # 加速算法样例
 ├── executor                                    # ModelRunner等模型执行相关的类定义
@@ -27,6 +31,8 @@ cann-recipes-infer仓库旨在针对LLM与多模态模型推理业务中的典�
 │  └── ...
 ├── models                                      # 模型脚本目录
 |  ├── deepseek-v3.2-exp                        # DeepSeek-V3.2-Exp的模型脚本及执行配置
+|  ├── qwen3_moe                                # Qwen3-MoE的模型脚本及执行配置
+│  └── ...
 ├── modules                                     # Linear等基础layer的类定义
 │  └── linear.py                                # Linear类定义
 │  └── ...
