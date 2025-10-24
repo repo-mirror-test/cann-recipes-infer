@@ -1,5 +1,5 @@
 model_name: "deepseek_v3.2_exp"
-model_path: "/data/models/DeepSeek-V3.2-Exp-int8/"
+model_path: "/data/models/DeepSeek-V3.2-Exp-W8A8C8"
 exe_mode: "ge_graph"          # ["ge_graph", "eager"], mode of decode
 world_size: 64                # world_size = 2 * chip_num in A3
 

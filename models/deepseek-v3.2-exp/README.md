@@ -73,48 +73,27 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
   在各个节点上通过如下命令进入容器：
   ```
   docker attach cann_recipes_infer
-  cd /home/code/cann-recipes-infer
+  cd /home/code/cann-recipes-infer/models/deepseek-v3.2-exp
   ```
 
 ### 转换权重
 
-  在各个节点上使用`convert_model.py` 脚本完成FP8到Bfloat16/Int8权重转换。脚本输入参数`input_fp8_hf_path`为原始fp8权重路径，`output_hf_path`为转换后的权重路径。
+  在各个节点上使用`weight_convert.sh` 脚本完成FP8到Bfloat16/Int8权重转换。
+  
+  >入参介绍：`input_fp8_hf_path`：原始fp8权重路径；`output_hf_path`：转换后输出的权重路径；`quant_mode`：量化模式
 
+  权重转换拉起示例：
   ```
   # 转换为Bfloat16权重
-  cd models/deepseek-v3.2-exp
-  python utils/convert_model.py --input_fp8_hf_path /data/models/DeepSeek-V3.2-Exp-fp8 --output_hf_path /data/models/DeepSeek-V3.2-Exp-bf16
-  ```
-当前提供`W8A8C16`和`W8A8C8`量化版本，转换脚本入参：
+  bash utils/weight_convert.sh --input_fp8_hf_path /data/models/DeepSeek-V3.2-Exp-FP8 --output_hf_path /data/models/DeepSeek-V3.2-Exp-Bfloat16 --quant_mode bfloat16
 
-`input_fp8_hf_path`：原始fp8权重路径
-
-`output_hf_path`：转换后输出的权重路径
-
-`w8a8`：w8a8量化开关
-
-`c8`：KVCache Int8量化开关
-
-`clip`：量化上下界开关
-
-`quant_param_path`：量化参数路径，配套量化参数可从[DeepSeek-V3.2-Exp W8A8C8量化参数](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/w8a8c8.zip)下载。可以使用以下命令下载和解压量化参数：
-
-  ```
-  export QUANT_DIR=/data/models/quantization
-  export QUANT_URL=https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/w8a8c8.zip
-  mkdir -p $QUANT_DIR
-  wget --no-check-certificate -P $QUANT_DIR $QUANT_URL && unzip $QUANT_DIR/w8a8c8.zip -d $QUANT_DIR
-  ```
-
-权重转换拉起示例：
-  ```  
   # 转换为W8A8C16权重
-  cd models/deepseek-v3.2-exp
-  python utils/convert_model.py --input_fp8_hf_path /data/models/DeepSeek-V3.2-Exp-fp8 --output_hf_path /data/models/DeepSeek-V3.2-Exp-W8A8C16 --w8a8
+  bash utils/weight_convert.sh --input_fp8_hf_path /data/models/DeepSeek-V3.2-Exp-FP8 --output_hf_path /data/models/DeepSeek-V3.2-Exp-W8A8C16 --quant_mode w8a8c16
+
   # 转换为W8A8C8权重
-  cd models/deepseek-v3.2-exp
-  python utils/convert_model.py --input_fp8_hf_path /data/models/DeepSeek-V3.2-Exp-fp8 --output_hf_path /data/models/DeepSeek-V3.2-Exp-W8A8C8 --w8a8 --c8 --clip --quant_param_path /data/models/quantization/w8a8c8
+  bash utils/weight_convert.sh --input_fp8_hf_path /data/models/DeepSeek-V3.2-Exp-FP8 --output_hf_path /data/models/DeepSeek-V3.2-Exp-W8A8C8 --quant_mode w8a8c8
   ```
+
 ### 修改代码
 - 在各个节点上修改 set_env.sh 文件中的IPs。
   ```shell
@@ -124,7 +103,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
 
   ```
   # BF16
-  model_path: "/data/models/DeepSeek-V3.2-Exp-bf16/"
+  model_path: "/data/models/DeepSeek-V3.2-Exp-Bfloat16"
   # Int8
   model_path: "/data/models/DeepSeek-V3.2-Exp-W8A8C8"
   ```
