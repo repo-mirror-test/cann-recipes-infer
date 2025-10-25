@@ -10,8 +10,8 @@ from typing import (
     Any, Callable, ContextManager, Iterator, List, Literal, NamedTuple, Optional, Sequence, Tuple, TypeVar,
     Union, overload,
 )
+
 import torch
-import torch_npu
 import torchair
 from torch import Generator, contiguous_format, inf, strided, SymInt
 from torch.types import Device, Number, _bool, _complex, _device, _dtype, _float, _int, _layout, _qscheme, _size
@@ -20,48 +20,59 @@ from torchair._ge_concrete_graph.fx2ge_converter import declare_supported, regis
 from torchair.ge._ge_graph import Tensor, TensorSpec, DataType
 from torchair._ge_concrete_graph.supported_declaration import _TypedTensor, F32, F16, F64, I32, I16, I64, I8, U8, \
     BOOL, Support
-from torchair._ge_concrete_graph.utils import dtype_promote
 from torchair.ge import attr
 
 
 # 为自定义算子注册converter，用于torch.compile 场景成图
-
 # 注意： meta_outputs形参名为固定写法，若写错会影响ge节点的输出dtype与shape推导
-@register_fx_node_ge_converter(torch.ops.custom.npu_lightning_indexer_quant.default)
-def convert_npu_lightning_indexer_quant(
+@register_fx_node_ge_converter(torch.ops.custom.npu_sparse_flash_attention_antiquant.default)
+def convert_npu_sparse_flash_attention_antiquant(
     query: Tensor,
     key: Tensor,
-    weights: Tensor,
-    query_dequant_scale: Tensor,
-    key_dequant_scale: Tensor,
+    value: Tensor,
+    sparse_indices: Tensor,
+    scale_value: float,
+    sparse_block_size: int,
+    key_quant_mode: int,
+    value_quant_mode: int,
     *,
-    actual_seq_lengths_query: Tensor = None,
-    actual_seq_lengths_key: Tensor = None,
-    block_table: Tensor = None,
-    query_quant_mode: int = 0,
-    key_quant_mode: int = 0,
+    key_dequant_scale: Optional[Tensor] = None,
+    value_dequant_scale: Optional[Tensor] = None,
+    block_table: Optional[Tensor] = None,
+    actual_seq_lengths_query: Optional[Tensor] = None,
+    actual_seq_lengths_kv: Optional[Tensor] = None,
     layout_query: str = "BSND",
-    layout_key: str = "BSND",
-    sparse_count: int = 2048,
+    layout_kv: str = "BSND",
     sparse_mode: int = 3,
-    meta_outputs: Any = None):
+    attention_mode: int = 0,
+    quant_scale_repo_mode: int = 0,
+    tile_size: int = 0,
+    rope_head_dim: int = 0,
+    meta_outputs: TensorSpec = None,
+):
     return torchair.ge.custom_op(
-        "LightningIndexerQuant",
-        inputs={"query": query,
+        "SparseFlashAttentionAntiquant",
+        inputs={"query": query, 
                 "key": key,
-                "weights": weights,
-                "query_dequant_scale": query_dequant_scale,
+                "value": value,
+                "sparse_indices": sparse_indices,
                 "key_dequant_scale": key_dequant_scale,
-                "actual_seq_lengths_query": actual_seq_lengths_query,
-                "actual_seq_lengths_key": actual_seq_lengths_key,
+                "value_dequant_scale": value_dequant_scale,
                 "block_table": block_table,
-                },
-        attrs={"query_quant_mode": attr.Int(query_quant_mode),
-               "key_quant_mode": attr.Int(key_quant_mode),
-               "layout_query": attr.Str(layout_query),
-               "layout_key": attr.Str(layout_key),
-               "sparse_count": attr.Int(sparse_count),
-               "sparse_mode": attr.Int(sparse_mode),
+                "actual_seq_lengths_query": actual_seq_lengths_query,
+                "actual_seq_lengths_kv": actual_seq_lengths_kv,
                },
-        outputs=['selected_indices']
+        attrs={"scale_value": attr.Float(scale_value),
+               "sparse_block_size": attr.Int(sparse_block_size),
+               "key_quant_mode": attr.Int(key_quant_mode),
+               "value_quant_mode": attr.Int(value_quant_mode),
+               "layout_query": attr.Str(layout_query),
+               "layout_kv": attr.Str(layout_kv),
+               "sparse_mode": attr.Int(sparse_mode),
+               "attention_mode": attr.Int(attention_mode),
+               "quant_scale_repo_mode": attr.Int(quant_scale_repo_mode),
+               "tile_size": attr.Int(tile_size),
+               "rope_head_dim": attr.Int(rope_head_dim),
+               },
+        outputs=['attention_out']
     )

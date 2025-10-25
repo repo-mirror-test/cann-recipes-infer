@@ -51,6 +51,7 @@ constexpr char QUANT_SCALE_CKV_NAME[] {"quantScaleCkv"};
 constexpr char QUANT_SCALE_CKR_NAME[] {"quantScaleCkr"};
 constexpr char SMOOTH_SCALES_CQ_NAME[] {"smoothScalesCq"};
 constexpr char ACTUAL_SEQ_LEN[] {"actualSeqLen"};
+constexpr char K_NOPE_CLIP_ALPHA_NAME[] {"kNopeClipAlpha"};
 constexpr char QUERY_NAME[] {"query"};
 constexpr char QUERY_ROPE_NAME[] {"queryRope"};
 constexpr char KV_CACHE_OUT_NAME[] {"kvCacheOut"};
@@ -147,7 +148,6 @@ private:
     bool CheckRmsnormGammaCq() const;
     bool CheckRopeCos() const;
     bool CheckRopeSin() const;
-    bool CheckCacheIndex() const;
     bool CheckKvCache() const;
     bool CheckKrCache() const;
     bool CheckActSeqLen() const;

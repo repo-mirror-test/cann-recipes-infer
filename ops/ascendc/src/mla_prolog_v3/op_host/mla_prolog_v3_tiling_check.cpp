@@ -191,11 +191,22 @@ void MlaPrologV3TilingCheck::FillRequiredParamShapeWithDims()
         baseShapeInfo_.hckvSize + baseShapeInfo_.drSize});
     expectedParamInfo_.emplace(RMSNORM_GAMMA_CQ_NAME, std::vector<uint32_t>{baseShapeInfo_.hcqSize});
     expectedParamInfo_.emplace(RMSNORM_GAMMA_CKV_NAME, std::vector<uint32_t>{baseShapeInfo_.hckvSize});
-
-    expectedParamInfo_.emplace(KV_CACHE_NAME, std::vector<uint32_t>{baseShapeInfo_.blockNum, baseShapeInfo_.blockSize,
-        baseShapeInfo_.nkvSize, baseShapeInfo_.dtileSize});
-    expectedParamInfo_.emplace(KR_CACHE_NAME, std::vector<uint32_t>{baseShapeInfo_.blockNum, baseShapeInfo_.blockSize,
-        baseShapeInfo_.nkvSize, baseShapeInfo_.drSize});
+    if (scenarioInfo_.cacheMode_ == CACHE_MODE::TND) {
+        expectedParamInfo_.emplace(KV_CACHE_NAME, std::vector<uint32_t>{baseShapeInfo_.tSize,
+            baseShapeInfo_.nkvSize, baseShapeInfo_.dtileSize});
+        expectedParamInfo_.emplace(KR_CACHE_NAME, std::vector<uint32_t>{baseShapeInfo_.tSize,
+            baseShapeInfo_.nkvSize, baseShapeInfo_.drSize});
+    } else if (scenarioInfo_.cacheMode_ == CACHE_MODE::BSND) {
+        expectedParamInfo_.emplace(KV_CACHE_NAME, std::vector<uint32_t>{baseShapeInfo_.bSize, baseShapeInfo_.s1Size,
+            baseShapeInfo_.nkvSize, baseShapeInfo_.dtileSize});
+        expectedParamInfo_.emplace(KR_CACHE_NAME, std::vector<uint32_t>{baseShapeInfo_.bSize, baseShapeInfo_.s1Size,
+            baseShapeInfo_.nkvSize, baseShapeInfo_.drSize});
+    } else {
+        expectedParamInfo_.emplace(KV_CACHE_NAME, std::vector<uint32_t>{baseShapeInfo_.blockNum,
+            baseShapeInfo_.blockSize, baseShapeInfo_.nkvSize, baseShapeInfo_.dtileSize});
+        expectedParamInfo_.emplace(KR_CACHE_NAME, std::vector<uint32_t>{baseShapeInfo_.blockNum,
+            baseShapeInfo_.blockSize, baseShapeInfo_.nkvSize, baseShapeInfo_.drSize});
+    }
     expectedParamInfo_.emplace(KV_CACHE_OUT_NAME, expectedParamInfo_[KV_CACHE_NAME]);
     expectedParamInfo_.emplace(KR_CACHE_OUT_NAME, expectedParamInfo_[KR_CACHE_NAME]);
 }
@@ -227,6 +238,13 @@ void MlaPrologV3TilingCheck::FillScenarioParamInfo()
         default:
             break;
     }
+    if (scenarioInfo_.cacheMode_ == CACHE_MODE::BSND || scenarioInfo_.cacheMode_ == CACHE_MODE::TND) {
+        expectedParamInfo_.emplace(CACHE_INDEX_NAME, context_.cacheIndex);
+        expectedParamInfo_[CACHE_INDEX_NAME].isValid = false;
+    } else {
+        expectedParamInfo_[CACHE_INDEX_NAME].isValid = true;
+        expectedParamInfo_[CACHE_INDEX_NAME].dtype = ge::DT_INT64;
+    }
 }
 
 void MlaPrologV3TilingCheck::FillNonQuantParamInfo()
@@ -240,7 +258,6 @@ void MlaPrologV3TilingCheck::FillNonQuantParamInfo()
     expectedParamInfo_[RMSNORM_GAMMA_CKV_NAME].dtype = ge::DT_BF16;
     expectedParamInfo_[ROPE_SIN_NAME].dtype = ge::DT_BF16;
     expectedParamInfo_[ROPE_COS_NAME].dtype = ge::DT_BF16;
-    expectedParamInfo_[CACHE_INDEX_NAME].dtype = ge::DT_INT64;
     expectedParamInfo_[KV_CACHE_NAME].dtype = ge::DT_BF16;
     expectedParamInfo_[KR_CACHE_NAME].dtype = ge::DT_BF16;
     expectedParamInfo_[QUERY_NAME].dtype = ge::DT_BF16;
@@ -263,7 +280,6 @@ void MlaPrologV3TilingCheck::FillPartialQuantParamInfo()
     expectedParamInfo_.emplace(SMOOTH_SCALES_CQ_NAME, std::vector<uint32_t>{1, baseShapeInfo_.hcqSize});
 
     expectedParamInfo_[WEIGHT_UQ_QR_NAME].dtype = ge::DT_INT8;
-    expectedParamInfo_[CACHE_INDEX_NAME].dtype = ge::DT_INT64;
 
     expectedParamInfo_[DEQUANT_SCALE_W_UQ_QR_NAME].dtype = ge::DT_FLOAT;
     expectedParamInfo_[SMOOTH_SCALES_CQ_NAME].dtype = ge::DT_FLOAT;
@@ -291,8 +307,13 @@ void MlaPrologV3TilingCheck::FillPartialKVPertileQuantParamInfo()
 {
     FillPartialQuantParamInfo();
 
+    expectedParamInfo_.emplace(K_NOPE_CLIP_ALPHA_NAME, std::vector<uint32_t>{1});
     expectedParamInfo_[KV_CACHE_NAME].dtype = ge::DT_INT8;
     expectedParamInfo_[KV_CACHE_OUT_NAME].dtype = ge::DT_INT8;
+    expectedParamInfo_[K_NOPE_CLIP_ALPHA_NAME].dtype = ge::DT_FLOAT;
+
+    expectedParamInfo_.erase(KR_CACHE_NAME);
+    expectedParamInfo_.erase(KR_CACHE_OUT_NAME);
 }
 
 void MlaPrologV3TilingCheck::FillFullQuantParamInfo()
@@ -315,7 +336,7 @@ void MlaPrologV3TilingCheck::FillFullQuantParamInfo()
 void MlaPrologV3TilingCheck::FillFullKVQuantParamInfo()
 {
     FillFullQuantParamInfo();
-    expectedParamInfo_.emplace(QUANT_SCALE_CKV_NAME, std::vector<uint32_t>{1, baseShapeInfo_.hckvSize});
+    expectedParamInfo_.emplace(QUANT_SCALE_CKV_NAME, std::vector<uint32_t>{1});
     expectedParamInfo_[DEQUANT_SCALE_Q_NOPE_NAME] =
         ParamInfo(std::vector<uint32_t>{baseShapeInfo_.tSize, baseShapeInfo_.nSize, 1});
 
@@ -331,9 +352,13 @@ void MlaPrologV3TilingCheck::FillFullKVQuantParamInfo()
 void MlaPrologV3TilingCheck::FillFullKVPertileQuantParamInfo()
 {
     FillFullQuantParamInfo();
-
+    expectedParamInfo_.emplace(K_NOPE_CLIP_ALPHA_NAME, std::vector<uint32_t>{1});
     expectedParamInfo_[KV_CACHE_NAME].dtype = ge::DT_INT8;
     expectedParamInfo_[KV_CACHE_OUT_NAME].dtype = ge::DT_INT8;
+    expectedParamInfo_[K_NOPE_CLIP_ALPHA_NAME].dtype = ge::DT_FLOAT;
+
+    expectedParamInfo_.erase(KR_CACHE_NAME);
+    expectedParamInfo_.erase(KR_CACHE_OUT_NAME);
 }
 
 void MlaPrologV3TilingCheck::GenActualParamInfo()
@@ -347,9 +372,7 @@ void MlaPrologV3TilingCheck::GenActualParamInfo()
     actualParamInfo_.emplace(RMSNORM_GAMMA_CKV_NAME, context_.rmsnormGammaCkv);
     actualParamInfo_.emplace(ROPE_SIN_NAME, context_.ropeSin);
     actualParamInfo_.emplace(ROPE_COS_NAME, context_.ropeCos);
-    if ((scenarioInfo_.cacheMode_ == CACHE_MODE::PA_BSND) || (scenarioInfo_.cacheMode_ == CACHE_MODE::PA_NZ)) {
-        expectedParamInfo_[CACHE_INDEX_NAME].dtype = ge::DT_INT64;
-    }
+    actualParamInfo_.emplace(CACHE_INDEX_NAME, context_.cacheIndex);
     actualParamInfo_.emplace(KV_CACHE_NAME, context_.kvCache);
     actualParamInfo_.emplace(KR_CACHE_NAME, context_.krCache);
     actualParamInfo_.emplace(DEQUANT_SCALE_X_NAME, context_.dequantScaleX);
@@ -359,11 +382,17 @@ void MlaPrologV3TilingCheck::GenActualParamInfo()
     actualParamInfo_.emplace(QUANT_SCALE_CKV_NAME, context_.quantScaleCkv);
     actualParamInfo_.emplace(QUANT_SCALE_CKR_NAME, context_.quantScaleCkr);
     actualParamInfo_.emplace(SMOOTH_SCALES_CQ_NAME, context_.smoothScalesCq);
+    actualParamInfo_.emplace(K_NOPE_CLIP_ALPHA_NAME, context_.kNopeClipAlpha);
     actualParamInfo_.emplace(QUERY_NAME, context_.query);
     actualParamInfo_.emplace(QUERY_ROPE_NAME, context_.queryRope);
     actualParamInfo_.emplace(KV_CACHE_OUT_NAME, context_.kvCacheOut);
     actualParamInfo_.emplace(KR_CACHE_OUT_NAME, context_.krCacheOut);
     actualParamInfo_.emplace(DEQUANT_SCALE_Q_NOPE_NAME, context_.dequantScaleQNope);
+    if (scenarioInfo_.quantMode_ == QUANT_MODE::PARTIAL_QUANT_KV_QUANT_PER_TILE ||
+        scenarioInfo_.quantMode_ == QUANT_MODE::FULL_QUANT_KV_QUANT_PER_TILE) {
+        actualParamInfo_.erase(KR_CACHE_NAME);
+        actualParamInfo_.erase(KR_CACHE_OUT_NAME);
+    }
 }
 
 ge::graphStatus MlaPrologV3TilingCheck::CheckParamByScenario()
@@ -410,18 +439,22 @@ ge::graphStatus MlaPrologV3TilingCheck::CheckScenarParam()
     ge::graphStatus isCorrect {ge::GRAPH_SUCCESS};
 
     if (scenarioInfo_.quantMode_ == QUANT_MODE::PARTIAL_QUANT_KV_QUANT_PER_TILE) {
-        if (*(context_.ckvkrRepoMode) != static_cast<int>(CKV_KR_REPO_MODE::COMBINE) && *(context_.quantScaleRepoMode) != static_cast<int>(QUANT_SCALE_REPO_MODE::COMBINE)) {
+        if (*(context_.ckvkrRepoMode) != static_cast<int>(CKV_KR_REPO_MODE::COMBINE) &&
+            *(context_.quantScaleRepoMode) != static_cast<int>(QUANT_SCALE_REPO_MODE::COMBINE)) {
             OPS_LOG_E(context_.opName, "The parameters for Scene PARTIAL_QUANT_KV_QUANT_PER_TILE are incorrect.");
             isCorrect = ge::GRAPH_FAILED;
         }
     } else if (scenarioInfo_.quantMode_ == QUANT_MODE::FULL_QUANT_KV_QUANT_PER_TILE) {
-        if (*(context_.ckvkrRepoMode) != static_cast<int>(CKV_KR_REPO_MODE::COMBINE) && *(context_.quantScaleRepoMode) != static_cast<int>(QUANT_SCALE_REPO_MODE::COMBINE)) {
+        if (*(context_.ckvkrRepoMode) != static_cast<int>(CKV_KR_REPO_MODE::COMBINE) &&
+            *(context_.quantScaleRepoMode) != static_cast<int>(QUANT_SCALE_REPO_MODE::COMBINE)) {
             OPS_LOG_E(context_.opName, "The parameters for Scene FULL_QUANT_KV_QUANT_PER_TILE are incorrect.");
             isCorrect = ge::GRAPH_FAILED;
         }
     } else if (scenarioInfo_.quantMode_ == QUANT_MODE::NO_QUANT) {
-        if (*(context_.weightQuantMode) != static_cast<int>(WEIGHT_QUANT_MODE::NO_QUANT) && *(context_.kvQuantMode) != static_cast<int>(KV_QUANT_MODE::NO_QUANT) && 
-            *(context_.queryQuantMode) != static_cast<int>(QUERY_QUANT_MODE::NO_QUANT) && *(context_.ckvkrRepoMode) != static_cast<int>(CKV_KR_REPO_MODE::DIVIDE) && 
+        if (*(context_.weightQuantMode) != static_cast<int>(WEIGHT_QUANT_MODE::NO_QUANT) &&
+            *(context_.kvQuantMode) != static_cast<int>(KV_QUANT_MODE::NO_QUANT) &&
+            *(context_.queryQuantMode) != static_cast<int>(QUERY_QUANT_MODE::NO_QUANT) &&
+            *(context_.ckvkrRepoMode) != static_cast<int>(CKV_KR_REPO_MODE::DIVIDE) &&
             *(context_.quantScaleRepoMode) != static_cast<int>(QUANT_SCALE_REPO_MODE::DIVIDE)) {
             OPS_LOG_E(context_.opName, "The parameters value are illegal scenario.");
             isCorrect = ge::GRAPH_FAILED;
@@ -466,7 +499,7 @@ bool MlaPrologV3TilingCheck::IsSingleParamValid(const RequiredParaInfo &param,
 ge::graphStatus MlaPrologV3TilingCheck::CheckSingleRequiredParam() const
 {
     if (!CheckTokenX() || !CheckWDq() || !CheckWUqQr() || !CheckWUk() || !CheckWDkvKr() || !CheckRmsnormGammaCq() ||
-        !CheckRmsnormGammaCkv() || !CheckRopeSin() || !CheckRopeCos() || !CheckCacheIndex() || !CheckKvCache() ||
+        !CheckRmsnormGammaCkv() || !CheckRopeSin() || !CheckRopeCos() || !CheckKvCache() ||
         !CheckKrCache() || !CheckActSeqLen()) {
         return ge::GRAPH_FAILED;
     }
@@ -527,40 +560,54 @@ bool MlaPrologV3TilingCheck::CheckRopeCos() const
         {ge::DT_BF16}, {ge::FORMAT_ND, ge::FORMAT_NCHW}, {2, 3});
 }
 
-bool MlaPrologV3TilingCheck::CheckCacheIndex() const
-{
-    return IsSingleParamValid(context_.cacheIndex, CACHE_INDEX_NAME,
-        {ge::DT_INT64}, {ge::FORMAT_ND, ge::FORMAT_NCHW}, {1, 2});
-}
-
 bool MlaPrologV3TilingCheck::CheckKvCache() const
 {
     return IsSingleParamValid(context_.kvCache, KV_CACHE_NAME,
-        {ge::DT_BF16, ge::DT_INT8}, {ge::FORMAT_ND, ge::FORMAT_NCHW}, {4});
+        {ge::DT_BF16, ge::DT_INT8}, {ge::FORMAT_ND, ge::FORMAT_NCHW}, {3, 4});
 }
 
 bool MlaPrologV3TilingCheck::CheckKrCache() const
 {
+    if (scenarioInfo_.quantMode_ == QUANT_MODE::PARTIAL_QUANT_KV_QUANT_PER_TILE ||
+        scenarioInfo_.quantMode_ == QUANT_MODE::FULL_QUANT_KV_QUANT_PER_TILE) {
+        return true;
+    }
     return IsSingleParamValid(context_.krCache, KR_CACHE_NAME,
-        {ge::DT_BF16, ge::DT_INT8}, {ge::FORMAT_ND, ge::FORMAT_NCHW}, {4});
+        {ge::DT_BF16, ge::DT_INT8}, {ge::FORMAT_ND, ge::FORMAT_NCHW}, {3, 4});
 }
 
 ge::graphStatus MlaPrologV3TilingCheck::CheckCacheMode() const
 {
-    if ((std::strncmp(context_.cacheMode, CACHE_MODE_PA_BSND, CACHE_MODE_PA_BSND_LEN) == 0) ||
+    if ((context_.tokenX.shape->GetStorageShape().GetDimNum() == MLA_PROLOG_V3_DIM_NUM_3) &&
+        (std::strncmp(context_.cacheMode, CACHE_MODE_TND, CACHE_MODE_TND_LEN) == 0)) {
+        OPS_LOG_E(context_.opName, "When tokenX dim is 3, Only support cacheMode (BSND, PA_BSND, PA_NZ, PA_BLK_BSND, PA_BLK_NZ), actually is %s.",
+            context_.cacheMode);
+        return ge::GRAPH_FAILED;
+    }
+    if ((context_.tokenX.shape->GetStorageShape().GetDimNum() == MLA_PROLOG_V3_DIM_NUM_2) &&
+        (std::strncmp(context_.cacheMode, CACHE_MODE_BSND, CACHE_MODE_BSND_LEN) == 0)) {
+        OPS_LOG_E(context_.opName, "When tokenX dim is 2, Only support cacheMode (TND, PA_BSND, PA_NZ, PA_BLK_BSND, PA_BLK_NZ), actually is %s.",
+            context_.cacheMode);
+        return ge::GRAPH_FAILED;
+    }
+    if ((std::strncmp(context_.cacheMode, CACHE_MODE_BSND, CACHE_MODE_BSND_LEN) == 0) ||
+        (std::strncmp(context_.cacheMode, CACHE_MODE_TND, CACHE_MODE_TND_LEN) == 0) ||
+        (std::strncmp(context_.cacheMode, CACHE_MODE_PA_BSND, CACHE_MODE_PA_BSND_LEN) == 0) ||
         (std::strncmp(context_.cacheMode, CACHE_MODE_PA_NZ, CACHE_MODE_PA_NZ_LEN) == 0) ||
         (std::strncmp(context_.cacheMode, CACHE_MODE_PA_BLK_BSND, CACHE_MODE_PA_BLK_BSND_LEN) == 0) ||
         (std::strncmp(context_.cacheMode, CACHE_MODE_PA_BLK_NZ, CACHE_MODE_PA_BLK_NZ_LEN) == 0)) {
         return ge::GRAPH_SUCCESS;
     }
-    OPS_LOG_E(context_.opName, "Only support cacheMode (PA_BSND, PA_NZ, PA_BLK_BSND, PA_BLK_NZ), actually is %s.",
+    OPS_LOG_E(context_.opName,
+        "Only support cacheMode (BSND, TND, PA_BSND, PA_NZ, PA_BLK_BSND, PA_BLK_NZ), actually is %s.",
         context_.cacheMode);
     return ge::GRAPH_FAILED;
 }
 
 ge::graphStatus MlaPrologV3TilingCheck::CheckPANZPerTile() const
 {
-    if ((std::strncmp(context_.cacheMode, CACHE_MODE_PA_NZ, CACHE_MODE_PA_NZ_LEN) == 0) && *(context_.kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE)) {
+    if ((std::strncmp(context_.cacheMode, CACHE_MODE_PA_NZ, CACHE_MODE_PA_NZ_LEN) == 0) &&
+        *(context_.kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE)) {
         OPS_LOG_E(context_.opName, "Not support both cacheMode PA_NZ and pertile effective.");
         return ge::GRAPH_FAILED;
     }

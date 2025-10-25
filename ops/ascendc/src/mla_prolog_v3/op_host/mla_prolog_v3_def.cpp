@@ -60,11 +60,6 @@ public:
             .DataType({ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16})
             .FormatList({ge::FORMAT_ND})
             .AutoContiguous();
-        this->Input("cache_index")
-            .ParamType(REQUIRED)
-            .DataTypeList({ge::DT_INT64})
-            .FormatList({ge::FORMAT_ND})
-            .AutoContiguous();
         this->Input("kv_cache")
             .ParamType(REQUIRED)
             .DataType({ge::DT_BF16, ge::DT_INT8, ge::DT_BF16, ge::DT_INT8, ge::DT_BF16, ge::DT_INT8, ge::DT_INT8, ge::DT_INT8})
@@ -73,6 +68,11 @@ public:
         this->Input("kr_cache")
             .ParamType(REQUIRED)
             .DataType({ge::DT_BF16, ge::DT_INT8, ge::DT_BF16, ge::DT_INT8, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16})
+            .FormatList({ge::FORMAT_ND})
+            .AutoContiguous();
+        this->Input("cache_index")
+            .ParamType(OPTIONAL)
+            .DataTypeList({ge::DT_INT64})
             .FormatList({ge::FORMAT_ND})
             .AutoContiguous();
         this->Input("dequant_scale_x")
@@ -115,6 +115,11 @@ public:
             .DataTypeList({ge::DT_INT32})
             .FormatList({ge::FORMAT_ND})
             .AutoContiguous();
+        this->Input("k_nope_clip_alpha")
+            .ParamType(OPTIONAL)
+            .DataTypeList({ge::DT_FLOAT})
+            .FormatList({ge::FORMAT_ND})
+            .AutoContiguous();
         this->Output("query")
             .ParamType(REQUIRED)
             .DataType({ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_INT8, ge::DT_BF16, ge::DT_BF16})
@@ -145,15 +150,14 @@ public:
             .FormatList({ge::FORMAT_ND});
         this->Attr("rmsnorm_epsilon_cq").AttrType(OPTIONAL).Float(1e-05f);
         this->Attr("rmsnorm_epsilon_ckv").AttrType(OPTIONAL).Float(1e-05f);
-        this->Attr("cache_mode").AttrType(OPTIONAL).String("BNSD");
-        this->Attr("query_norm_flag").AttrType(OPTIONAL).Int(0);
+        this->Attr("cache_mode").AttrType(OPTIONAL).String("PA_BSND");
+        this->Attr("query_norm_flag").AttrType(OPTIONAL).Bool(false);
         this->Attr("weight_quant_mode").AttrType(OPTIONAL).Int(0);
-        this->Attr("kv_quant_mode").AttrType(OPTIONAL).Int(0);
+        this->Attr("kv_cache_quant_mode").AttrType(OPTIONAL).Int(0);
         this->Attr("query_quant_mode").AttrType(OPTIONAL).Int(0);
         this->Attr("ckvkr_repo_mode").AttrType(OPTIONAL).Int(0);
         this->Attr("quant_scale_repo_mode").AttrType(OPTIONAL).Int(0);
         this->Attr("tile_size").AttrType(OPTIONAL).Int(128); // 128 : set value of tile size
-        this->Attr("k_nope_clip_alpha").AttrType(OPTIONAL).Float(1.0f);
         this->Attr("qc_qr_scale").AttrType(OPTIONAL).Float(1.0f);
         this->Attr("kc_scale").AttrType(OPTIONAL).Float(1.0f);
         OpAICoreConfig aicore_config;

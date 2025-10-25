@@ -17,7 +17,7 @@ from torch import Generator, contiguous_format, inf, strided, SymInt
 from torch.types import Device, Number, _bool, _complex, _device, _dtype, _float, _int, _layout, _qscheme, _size
 from torchair._ge_concrete_graph import ge_apis as ge
 from torchair._ge_concrete_graph.fx2ge_converter import declare_supported, register_fx_node_ge_converter
-from torchair.ge._ge_graph import Tensor, TensorSpec, DataType
+from torchair.ge._ge_graph import Tensor, TensorSpec, DataType, TensorType
 from torchair._ge_concrete_graph.supported_declaration import _TypedTensor, F32, F16, F64, I32, I16, I64, I8, U8, \
     BOOL, Support
 from torchair._ge_concrete_graph.utils import dtype_promote
@@ -31,18 +31,19 @@ from torchair.ge._ge_graph import get_default_ge_graph, next_unique_name, auto_c
 # This api is auto-generated from IR MlaPrologV3
 @auto_convert_to_tensor(
         [False, False, False, False, False, False, False, False, False, False,
-         False, False, False, False, False, False, False, False, False, False],
+         False, False, False, False, False, False, False, False, False, False, False],
         [False, False, False, False, False, False, False, False, False, False,
-         False, False, True, True, True, True, True, True, True, True])
+         False, True, True, True, True, True, True, True, True, True, True])
 def MlaPrologV3(token_x: Tensor, weight_dq: Tensor, weight_uq_qr: Tensor, weight_uk: Tensor,
     weight_dkv_kr: Tensor, rmsnorm_gamma_cq: Tensor, rmsnorm_gamma_ckv: Tensor, rope_sin: Tensor,
-    rope_cos: Tensor, cache_index: Tensor, kv_cache: Tensor, kr_cache: Tensor, dequant_scale_x: Optional[Tensor],
-    dequant_scale_w_dq: Optional[Tensor], dequant_scale_w_uq_qr: Optional[Tensor], dequant_scale_w_dkv_kr: Optional[Tensor],
-    quant_scale_ckv: Optional[Tensor], quant_scale_ckr: Optional[Tensor], smooth_scales_cq: Optional[Tensor],
-    actual_seq_len: Optional[Tensor], *, rmsnorm_epsilon_cq: float = 0.000010, rmsnorm_epsilon_ckv: float = 0.000010,
-    cache_mode: str = "PA_BSND", query_norm_flag: int = 0, weight_quant_mode: int = 0, kv_quant_mode: int = 0,
-    query_quant_mode: int = 0, ckvkr_repo_mode: int = 0, quant_scale_repo_mode: int = 0, tile_size: int = 128,
-    k_nope_clip_alpha: float = 1.0, qc_qr_scale: float = 1.0, kc_scale: float = 1.0, dependencies=[], node_name=None):
+    rope_cos: Tensor, kv_cache: Tensor, kr_cache: Tensor, cache_index: Optional[Tensor],
+    dequant_scale_x: Optional[Tensor], dequant_scale_w_dq: Optional[Tensor], dequant_scale_w_uq_qr: Optional[Tensor],
+    dequant_scale_w_dkv_kr: Optional[Tensor], quant_scale_ckv: Optional[Tensor], quant_scale_ckr: Optional[Tensor],
+    smooth_scales_cq: Optional[Tensor], actual_seq_len: Optional[Tensor], k_nope_clip_alpha: Optional[Tensor], *,
+    rmsnorm_epsilon_cq: float = 0.000010, rmsnorm_epsilon_ckv: float = 0.000010, cache_mode: str = "PA_BSND",
+    query_norm_flag: bool = False, weight_quant_mode: int = 0, kv_cache_quant_mode: int = 0, query_quant_mode: int = 0,
+    ckvkr_repo_mode: int = 0, quant_scale_repo_mode: int = 0, tile_size: int = 128, qc_qr_scale: float = 1.0,
+    kc_scale: float = 1.0, dependencies=[], node_name=None):
     """REG_OP(MlaPrologV3)\n
 .INPUT(token_x, TensorType({DT_INT8, DT_BF16}))\n
 .INPUT(weight_dq, TensorType({DT_INT8, DT_BF16}))\n
@@ -53,9 +54,9 @@ def MlaPrologV3(token_x: Tensor, weight_dq: Tensor, weight_uq_qr: Tensor, weight
 .INPUT(rmsnorm_gamma_ckv, TensorType({DT_FLOAT16, DT_BF16}))\n
 .INPUT(rope_sin, TensorType({DT_FLOAT16, DT_BF16}))\n
 .INPUT(rope_cos, TensorType({DT_FLOAT16, DT_BF16}))\n
-.INPUT(cache_index, TensorType({DT_INT64}))\n
 .INPUT(kv_cache, TensorType({DT_FLOAT16, DT_BF16, DT_INT8}))\n
 .INPUT(kr_cache, TensorType({DT_FLOAT16, DT_BF16, DT_INT8}))\n
+.OPTIONAL_INPUT(cache_index, TensorType({DT_INT64}))\n
 .OPTIONAL_INPUT(dequant_scale_x, TensorType({DT_FLOAT}))\n
 .OPTIONAL_INPUT(dequant_scale_w_dq, TensorType({DT_FLOAT}))\n
 .OPTIONAL_INPUT(dequant_scale_w_uq_qr, TensorType({DT_FLOAT}))\n
@@ -63,7 +64,8 @@ def MlaPrologV3(token_x: Tensor, weight_dq: Tensor, weight_uq_qr: Tensor, weight
 .OPTIONAL_INPUT(quant_scale_ckv, TensorType({DT_FLOAT}))\n
 .OPTIONAL_INPUT(quant_scale_ckr, TensorType({DT_FLOAT}))\n
 .OPTIONAL_INPUT(smooth_scales_cq, TensorType({DT_FLOAT}))\n
-.OPTIONAL_INPUT(actual_seq_len, TensorType({DT_INT64}))\n
+.OPTIONAL_INPUT(actual_seq_len, TensorType({DT_INT32}))\n
+.OPTIONAL_INPUT(k_nope_clip_alpha, TensorType({DT_FLOAT}))\n
 .OUTPUT(query, TensorType({DT_FLOAT16, DT_BF16, DT_INT8}))\n
 .OUTPUT(query_rope, TensorType({DT_FLOAT16, DT_BF16, DT_INT8}))\n
 .OUTPUT(kv_cache, TensorType({DT_FLOAT16, DT_BF16, DT_INT8}))\n
@@ -74,13 +76,12 @@ def MlaPrologV3(token_x: Tensor, weight_dq: Tensor, weight_uq_qr: Tensor, weight
 .ATTR(rmsnorm_epsilon_cq, Float, 1e-05)\n
 .ATTR(rmsnorm_epsilon_ckv, Float, 1e-05)\n
 .ATTR(cache_mode, String, "PA_BSND")\n
-.ATTR(query_norm_flag, Int, 0)\n
+.ATTR(query_norm_flag, Bool, 0)\n
 .ATTR(weight_quant_mode, Int, 0)\n
 .ATTR(query_quant_mode, Int, 0)\n
 .ATTR(ckvkr_repo_mode, Int, 0)\n
 .ATTR(quant_scale_repo_mode, Int, 0)\n
 .ATTR(tile_size, Int, 0)\n
-.ATTR(k_nope_clip_alpha, Float, 1.0)\n
 .ATTR(qc_qr_scale, Float, 1.0)\n
 .ATTR(kc_scale, Float, 1.0)\n
 """
@@ -130,10 +131,6 @@ def MlaPrologV3(token_x: Tensor, weight_dq: Tensor, weight_uq_qr: Tensor, weight
     op.input_desc.add().CopyFrom(rope_cos.desc)
     op.input_desc[-1].name = "rope_cos"
 
-    op.input.append(cache_index.tensor)
-    op.input_desc.add().CopyFrom(cache_index.desc)
-    op.input_desc[-1].name = "cache_index"
-
     op.input.append(kv_cache.tensor)
     op.input_desc.add().CopyFrom(kv_cache.desc)
     op.input_desc[-1].name = "kv_cache"
@@ -141,6 +138,15 @@ def MlaPrologV3(token_x: Tensor, weight_dq: Tensor, weight_uq_qr: Tensor, weight
     op.input.append(kr_cache.tensor)
     op.input_desc.add().CopyFrom(kr_cache.desc)
     op.input_desc[-1].name = "kr_cache"
+
+    if cache_index is not None:
+        op.input.append(cache_index.tensor)
+        op.input_desc.add().CopyFrom(cache_index.desc)
+        op.input_desc[-1].name = "cache_index"
+    else:
+        op.input.append('')
+        op.input_desc.add().CopyFrom(get_invalid_desc())
+        op.input_desc[-1].name = "cache_index"
 
     if dequant_scale_x is not None:
         op.input.append(dequant_scale_x.tensor)
@@ -204,6 +210,7 @@ def MlaPrologV3(token_x: Tensor, weight_dq: Tensor, weight_uq_qr: Tensor, weight
         op.input.append('')
         op.input_desc.add().CopyFrom(get_invalid_desc())
         op.input_desc[-1].name = "smooth_scales_cq"
+
     if actual_seq_len is not None:
         op.input.append(actual_seq_len.tensor)
         op.input_desc.add().CopyFrom(actual_seq_len.desc)
@@ -213,18 +220,26 @@ def MlaPrologV3(token_x: Tensor, weight_dq: Tensor, weight_uq_qr: Tensor, weight
         op.input_desc.add().CopyFrom(get_invalid_desc())
         op.input_desc[-1].name = "actual_seq_len"
 
+    if k_nope_clip_alpha is not None:
+        op.input.append(k_nope_clip_alpha.tensor)
+        op.input_desc.add().CopyFrom(k_nope_clip_alpha.desc)
+        op.input_desc[-1].name = "k_nope_clip_alpha"
+    else:
+        op.input.append('')
+        op.input_desc.add().CopyFrom(get_invalid_desc())
+        op.input_desc[-1].name = "k_nope_clip_alpha"
+
     # process attrs
     op.attr["rmsnorm_epsilon_cq"].f = rmsnorm_epsilon_cq
     op.attr["rmsnorm_epsilon_ckv"].f = rmsnorm_epsilon_ckv
     op.attr["cache_mode"].s = compat_as_bytes(cache_mode)
-    op.attr["query_norm_flag"].i = query_norm_flag
+    op.attr["query_norm_flag"].b = query_norm_flag
     op.attr["weight_quant_mode"].i = weight_quant_mode
-    op.attr["kv_quant_mode"].i = kv_quant_mode
+    op.attr["kv_cache_quant_mode"].i = kv_cache_quant_mode
     op.attr["query_quant_mode"].i = query_quant_mode
     op.attr["ckvkr_repo_mode"].i = ckvkr_repo_mode
     op.attr["quant_scale_repo_mode"].i = quant_scale_repo_mode
     op.attr["tile_size"].i = tile_size
-    op.attr["k_nope_clip_alpha"].f = k_nope_clip_alpha
     op.attr["qc_qr_scale"].f = qc_qr_scale
     op.attr["kc_scale"].f = kc_scale
 
@@ -267,10 +282,10 @@ def custom_npu_mla_prolog_v3_func(
     rmsnorm_gamma_ckv: Tensor,
     rope_sin: Tensor,
     rope_cos: Tensor,
-    cache_index: Tensor,
     kv_cache: Tensor,
     kr_cache: Tensor,
     *,
+    cache_index: Optional[Tensor] = None,
     dequant_scale_x: Optional[Tensor] = None,
     dequant_scale_w_dq: Optional[Tensor] = None,
     dequant_scale_w_uq_qr: Optional[Tensor] = None,
@@ -279,32 +294,31 @@ def custom_npu_mla_prolog_v3_func(
     quant_scale_ckr: Optional[Tensor] = None,
     smooth_scales_cq: Optional[Tensor] = None,
     actual_seq_len: Optional[Tensor] = None,
+    k_nope_clip_alpha: Optional[Tensor] = None,
     rmsnorm_epsilon_cq: float = 1e-5,
     rmsnorm_epsilon_ckv: float = 1e-5,
     cache_mode: str = "PA_BSND",
-    query_norm_flag: int = 0,
+    query_norm_flag: bool = False,
     weight_quant_mode: int = 0,
-    kv_quant_mode: int = 0,
+    kv_cache_quant_mode: int = 0,
     query_quant_mode: int = 0,
     ckvkr_repo_mode: int = 0,
     quant_scale_repo_mode: int = 0,
     tile_size: int = 128,
-    k_nope_clip_alpha: float = 1.0,
     qc_qr_scale: float = 1.0,
     kc_scale: float = 1.0
 ):
     query, query_rope, dequant_scale_q_nope, query_norm, dequant_scale_q_norm, kv_cache_out, kr_cache_out = torch.ops.custom.npu_mla_prolog_v3_functional(
         token_x, weight_dq, weight_uq_qr, weight_uk, weight_dkv_kr, rmsnorm_gamma_cq,
-        rmsnorm_gamma_ckv, rope_sin, rope_cos, cache_index, kv_cache, kr_cache,
+        rmsnorm_gamma_ckv, rope_sin, rope_cos, kv_cache, kr_cache, cache_index=cache_index,
         rmsnorm_epsilon_cq=rmsnorm_epsilon_cq, rmsnorm_epsilon_ckv=rmsnorm_epsilon_ckv,
         dequant_scale_x=dequant_scale_x, dequant_scale_w_dq=dequant_scale_w_dq,
         dequant_scale_w_uq_qr=dequant_scale_w_uq_qr, dequant_scale_w_dkv_kr=dequant_scale_w_dkv_kr,
         quant_scale_ckv=quant_scale_ckv, quant_scale_ckr=quant_scale_ckr,
-        smooth_scales_cq=smooth_scales_cq, actual_seq_len=actual_seq_len,
+        smooth_scales_cq=smooth_scales_cq, actual_seq_len=actual_seq_len, k_nope_clip_alpha=k_nope_clip_alpha,
         cache_mode=cache_mode, query_norm_flag=query_norm_flag, weight_quant_mode=weight_quant_mode,
-        kv_quant_mode=kv_quant_mode, query_quant_mode=query_quant_mode, ckvkr_repo_mode=ckvkr_repo_mode,
-        quant_scale_repo_mode=quant_scale_repo_mode, tile_size=tile_size, k_nope_clip_alpha=k_nope_clip_alpha,
-        qc_qr_scale=qc_qr_scale, kc_scale=kc_scale)
+        kv_cache_quant_mode=kv_cache_quant_mode, query_quant_mode=query_quant_mode, ckvkr_repo_mode=ckvkr_repo_mode,
+        quant_scale_repo_mode=quant_scale_repo_mode, tile_size=tile_size, qc_qr_scale=qc_qr_scale, kc_scale=kc_scale)
     kv_cache.copy_(kv_cache_out)
     kr_cache.copy_(kr_cache_out)
     return query, query_rope, dequant_scale_q_nope, query_norm, dequant_scale_q_norm
@@ -323,10 +337,10 @@ def convert_npu_npu_mla_prolog_v3(
     rmsnorm_gamma_ckv: Tensor,
     rope_sin: Tensor,
     rope_cos: Tensor,
-    cache_index: Tensor,
     kv_cache: Tensor,
     kr_cache: Tensor,
     *,
+    cache_index: Optional[Tensor] = None,
     dequant_scale_x: Optional[Tensor] = None,
     dequant_scale_w_dq: Optional[Tensor] = None,
     dequant_scale_w_uq_qr: Optional[Tensor] = None,
@@ -335,17 +349,17 @@ def convert_npu_npu_mla_prolog_v3(
     quant_scale_ckr: Optional[Tensor] = None,
     smooth_scales_cq: Optional[Tensor] = None,
     actual_seq_len: Optional[Tensor] = None,
+    k_nope_clip_alpha: Optional[Tensor] = None,
     rmsnorm_epsilon_cq: float = 1e-5,
     rmsnorm_epsilon_ckv: float = 1e-5,
     cache_mode: str = "PA_BSND",
-    query_norm_flag: int = 0,
+    query_norm_flag: bool = False,
     weight_quant_mode: int = 0,
-    kv_quant_mode: int = 0,
+    kv_cache_quant_mode: int = 0,
     query_quant_mode: int = 0,
     ckvkr_repo_mode: int = 0,
     quant_scale_repo_mode: int = 0,
     tile_size: int = 128,
-    k_nope_clip_alpha: float = 1.0,
     qc_qr_scale: float = 1.0,
     kc_scale: float = 1.0,
     meta_outputs: TensorSpec = None,
@@ -361,9 +375,9 @@ def convert_npu_npu_mla_prolog_v3(
                 "rmsnorm_gamma_ckv": rmsnorm_gamma_ckv,
                 "rope_sin": rope_sin,
                 "rope_cos": rope_cos,
-                "cache_index": cache_index,
                 "kv_cache": kv_cache,
                 "kr_cache": kr_cache,
+                "cache_index": cache_index,
                 "dequant_scale_x": dequant_scale_x,
                 "dequant_scale_w_dq": dequant_scale_w_dq,
                 "dequant_scale_w_uq_qr": dequant_scale_w_uq_qr,
@@ -372,18 +386,18 @@ def convert_npu_npu_mla_prolog_v3(
                 "quant_scale_ckr": quant_scale_ckr,
                 "smooth_scales_cq": smooth_scales_cq,
                 "actual_seq_len": actual_seq_len,
+                "k_nope_clip_alpha": k_nope_clip_alpha,
                 },
         attrs={"rmsnorm_epsilon_cq": attr.Float(rmsnorm_epsilon_cq),
                "rmsnorm_epsilon_ckv": attr.Float(rmsnorm_epsilon_ckv),
                "cache_mode": attr.Str(cache_mode),
-               "query_norm_flag": attr.Int(query_norm_flag),
+               "query_norm_flag": attr.Bool(query_norm_flag),
                "weight_quant_mode": attr.Int(weight_quant_mode),
-               "kv_quant_mode": attr.Int(kv_quant_mode),
+               "kv_cache_quant_mode": attr.Int(kv_cache_quant_mode),
                "query_quant_mode": attr.Int(query_quant_mode),
                "ckvkr_repo_mode": attr.Int(ckvkr_repo_mode),
                "quant_scale_repo_mode": attr.Int(quant_scale_repo_mode),
                "tile_size": attr.Int(tile_size),
-               "k_nope_clip_alpha": attr.Float(k_nope_clip_alpha),
                "qc_qr_scale": attr.Float(qc_qr_scale),
                "kc_scale": attr.Float(kc_scale),
                },
@@ -401,10 +415,10 @@ def convert_npu_npu_mla_prolog_v3_functional(
     rmsnorm_gamma_ckv: Tensor,
     rope_sin: Tensor,
     rope_cos: Tensor,
-    cache_index: Tensor,
     kv_cache: Tensor,
     kr_cache: Tensor,
     *,
+    cache_index: Optional[Tensor] = None,
     dequant_scale_x: Optional[Tensor] = None,
     dequant_scale_w_dq: Optional[Tensor] = None,
     dequant_scale_w_uq_qr: Optional[Tensor] = None,
@@ -413,17 +427,17 @@ def convert_npu_npu_mla_prolog_v3_functional(
     quant_scale_ckr: Optional[Tensor] = None,
     smooth_scales_cq: Optional[Tensor] = None,
     actual_seq_len: Optional[Tensor] = None,
+    k_nope_clip_alpha: Optional[Tensor] = None,
     rmsnorm_epsilon_cq: float = 1e-5,
     rmsnorm_epsilon_ckv: float = 1e-5,
     cache_mode: str = "PA_BSND",
-    query_norm_flag: int = 0,
+    query_norm_flag: bool = False,
     weight_quant_mode: int = 0,
-    kv_quant_mode: int = 0,
+    kv_cache_quant_mode: int = 0,
     query_quant_mode: int = 0,
     ckvkr_repo_mode: int = 0,
     quant_scale_repo_mode: int = 0,
     tile_size: int = 128,
-    k_nope_clip_alpha: float = 1.0,
     qc_qr_scale: float = 1.0,
     kc_scale: float = 1.0,
     meta_outputs: TensorSpec = None
@@ -448,9 +462,9 @@ def convert_npu_npu_mla_prolog_v3_functional(
         rmsnorm_gamma_ckv,
         rope_sin,
         rope_cos,
-        cache_index,
         kv_cache_copy,
         kr_cache_copy,
+        cache_index=cache_index,
         dequant_scale_x=dequant_scale_x,
         dequant_scale_w_dq=dequant_scale_w_dq,
         dequant_scale_w_uq_qr=dequant_scale_w_uq_qr,
@@ -459,17 +473,17 @@ def convert_npu_npu_mla_prolog_v3_functional(
         quant_scale_ckr=quant_scale_ckr,
         smooth_scales_cq=smooth_scales_cq,
         actual_seq_len=actual_seq_len,
+        k_nope_clip_alpha=k_nope_clip_alpha,
         rmsnorm_epsilon_cq=rmsnorm_epsilon_cq,
         rmsnorm_epsilon_ckv=rmsnorm_epsilon_ckv,
         cache_mode=cache_mode,
         query_norm_flag=query_norm_flag,
         weight_quant_mode=weight_quant_mode,
-        kv_quant_mode=kv_quant_mode,
+        kv_cache_quant_mode=kv_cache_quant_mode,
         query_quant_mode=query_quant_mode,
         ckvkr_repo_mode=ckvkr_repo_mode,
         quant_scale_repo_mode=quant_scale_repo_mode,
         tile_size=tile_size,
-        k_nope_clip_alpha=k_nope_clip_alpha,
         qc_qr_scale=qc_qr_scale,
         kc_scale=kc_scale
     )

@@ -14,8 +14,6 @@
 * \brief
 */
 
-// TODO：不支持PANZ，后续添加拦截
-
 #include <numeric>
 #include <functional>
 #include <algorithm>
@@ -81,20 +79,26 @@ ge::graphStatus MlaPrologV3Tiling::GetNpuInfo()
 QUANT_MODE MlaPrologV3Tiling::GetQuantizationMode() const
 {
     if (*(context_->weightQuantMode) == static_cast<int>(WEIGHT_QUANT_MODE::PARTIAL_QUANT)) {
-        if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::NO_QUANT) && *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::NO_QUANT) &&
+            *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
             return QUANT_MODE::PARTIAL_QUANT_KV_NO_QUANT;
-        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_CHANNEL) && *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_CHANNEL) &&
+                   *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
             return QUANT_MODE::PARTIAL_QUANT_KV_QUANT_PER_CHANNEL;
-        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE) && *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE) &&
+                   *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
             return QUANT_MODE::PARTIAL_QUANT_KV_QUANT_PER_TILE;
         }
     }
     if (*(context_->weightQuantMode) == static_cast<int>(WEIGHT_QUANT_MODE::FULL_QUANT)) {
-        if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::NO_QUANT) && *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::NO_QUANT) &&
+            *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
             return QUANT_MODE::FULL_QUANT_KV_NO_QUANT;
-        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TENSOR) && *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::PER_TOKEN_HEAD)) {
+        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TENSOR) &&
+                   *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::PER_TOKEN_HEAD)) {
             return QUANT_MODE::FULL_QUANT_KV_QUANT_PER_TENSOR;
-        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE) && *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE) &&
+                   *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
             return QUANT_MODE::FULL_QUANT_KV_QUANT_PER_TILE;
         }
     }
@@ -127,9 +131,16 @@ ge::graphStatus MlaPrologV3Tiling::SetShapeInfo()
     baseShapeInfo_.headSizeQc = baseShapeInfo_.dSize * baseShapeInfo_.nSize;
     baseShapeInfo_.headSizeQr = baseShapeInfo_.drSize * baseShapeInfo_.nSize;
     baseShapeInfo_.headSizeUqQr = baseShapeInfo_.headSizeQc + baseShapeInfo_.headSizeQr;
-    baseShapeInfo_.blockNum = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_0);
-    baseShapeInfo_.blockSize = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_1);
-    baseShapeInfo_.nkvSize = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_2);
+    if (context_->kvCache.shape->GetStorageShape().GetDimNum() == MLA_PROLOG_V3_DIM_NUM_3) {
+        baseShapeInfo_.blockNum = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_0); // kvT
+        baseShapeInfo_.nkvSize = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_1);
+        baseShapeInfo_.dtileSize = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_2);
+    } else {
+        baseShapeInfo_.blockNum = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_0);
+        baseShapeInfo_.blockSize = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_1);
+        baseShapeInfo_.nkvSize = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_2);
+        baseShapeInfo_.dtileSize = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_3);
+    }
     if (context_->weightDkvKr.shape->GetStorageShape().GetDimNum() == MLA_PROLOG_V3_DIM_NUM_4) {
         baseShapeInfo_.hckvSize =
             context_->weightDkvKr.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_0) *
@@ -139,7 +150,6 @@ ge::graphStatus MlaPrologV3Tiling::SetShapeInfo()
         baseShapeInfo_.hckvSize =
             context_->weightDkvKr.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_1) - baseShapeInfo_.drSize;
     }
-    baseShapeInfo_.dtileSize = context_->kvCache.shape->GetStorageShape().GetDim(MLA_PROLOG_V3_DIM_INDEX_3);
     baseShapeInfo_.s2Size = baseShapeInfo_.nkvSize;
     return ge::GRAPH_SUCCESS;
 }
@@ -149,7 +159,11 @@ ge::graphStatus MlaPrologV3Tiling::SetScenarioInfo()
     scenarioInfo_.isV1Flag_ = (strcmp(context_->opType, V1_OP_NAME) == 0);
     scenarioInfo_.batchSeqFusedFlag_ = context_->tokenX.shape->GetStorageShape().GetDimNum() == MLA_PROLOG_V3_DIM_NUM_2;
     scenarioInfo_.quantMode_ = GetQuantizationMode();
-    if (std::strncmp(context_->cacheMode, CACHE_MODE_PA_BSND, CACHE_MODE_PA_BSND_LEN) == 0) {
+    if (std::strncmp(context_->cacheMode, CACHE_MODE_BSND, CACHE_MODE_BSND_LEN) == 0) {
+        scenarioInfo_.cacheMode_ = CACHE_MODE::BSND;
+    } else if (std::strncmp(context_->cacheMode, CACHE_MODE_TND, CACHE_MODE_TND_LEN) == 0) {
+        scenarioInfo_.cacheMode_ = CACHE_MODE::TND;
+    } else if (std::strncmp(context_->cacheMode, CACHE_MODE_PA_BSND, CACHE_MODE_PA_BSND_LEN) == 0) {
         scenarioInfo_.cacheMode_ = CACHE_MODE::PA_BSND;
     } else if (std::strncmp(context_->cacheMode, CACHE_MODE_PA_NZ, CACHE_MODE_PA_NZ_LEN) == 0) {
         scenarioInfo_.cacheMode_ = CACHE_MODE::PA_NZ;
@@ -196,7 +210,6 @@ ge::graphStatus MlaPrologV3Tiling::SetAttrInfo()
     ckvkrRepoMode_ = *context_->ckvkrRepoMode;
     quantScaleRepoMode_ = *context_->quantScaleRepoMode;
     tileSize_ = *context_->tileSize;
-    kNopeClipAlpha_ = *context_->kNopeClipAlpha;
     qcQrScale_ = *context_->qcQrScale;
     kcScale_ = *context_->kcScale;
 
@@ -385,7 +398,6 @@ ge::graphStatus MlaPrologV3Tiling::FillTiling()
     baseParams_->ckvkrRepoMode = ckvkrRepoMode_;
     baseParams_->quantScaleRepoMode = quantScaleRepoMode_;
     baseParams_->tileSize = tileSize_;
-    baseParams_->kNopeClipAlpha = kNopeClipAlpha_;
     return ge::GRAPH_SUCCESS;
 }
 
@@ -457,9 +469,11 @@ ge::graphStatus MlaPrologV3Tiling::GenTilingKey() const
             0
         );
     } else {
+        uint8_t cacheMode = scenarioInfo_.cacheMode_ == CACHE_MODE::TND ?
+            0 : static_cast<uint8_t>(scenarioInfo_.cacheMode_);
         context_->tilingKey = GET_TPL_TILING_KEY(
-            static_cast<uint8_t>(scenarioInfo_.cacheMode_),
-            typeValue, 
+            static_cast<uint8_t>(cacheMode),
+            typeValue,
             quantType,
             enableDequantOpt_,
             enableGroupComputeOpt_,
@@ -469,7 +483,6 @@ ge::graphStatus MlaPrologV3Tiling::GenTilingKey() const
         );
     }
     OPS_LOG_I(context_->opName, "MlaPrologV3 tilingKey:%lu", context_->tilingKey);
-    printf("MlaPrologV3 tilingKey:%lu\n", context_->tilingKey);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -491,9 +504,9 @@ ge::graphStatus MlaPrologV3Tiling::RunBigKernelTiling(MlaPrologV3Context &contex
         std::bind(&MlaPrologV3Tiling::SetAttrInfo, this),
         std::bind(&MlaPrologV3Tiling::SetScenarioInfo, this),
         std::bind(&MlaPrologV3TilingCheck::CheckScenarParam, &tilingCheck_),
-        std::bind(&MlaPrologV3TilingCheck::CheckPANZPerTile, &tilingCheck_), 
+        std::bind(&MlaPrologV3TilingCheck::CheckPANZPerTile, &tilingCheck_),
         std::bind(&MlaPrologV3TilingCheck::CheckDims, &tilingCheck_),
-        std::bind(&MlaPrologV3TilingCheck::CheckParamByScenario, &tilingCheck_), // MLATODO: Check queryNorm
+        std::bind(&MlaPrologV3TilingCheck::CheckParamByScenario, &tilingCheck_),
         std::bind(&MlaPrologV3Tiling::ProcessBaseInputs, this),
     };
     for (const auto &func: requiredTilingFuncs) {
@@ -554,7 +567,7 @@ ge::graphStatus MlaPrologV3Tiling::ConvertContext(gert::TilingContext &context, 
         GetAttrPointer<float>(RMS_NORM_EPSILON_CQ_ATTR_INDEX);
     mlaPrologV3Context.rmsNormEspilonCkv = attrs->GetAttrPointer<float>(RMS_NORM_EPSILON_CKV_ATTR_INDEX);
     mlaPrologV3Context.cacheMode = attrs->GetStr(CACHE_MODE_ATTR_INDEX);
-    mlaPrologV3Context.queryNormFlag = attrs->GetAttrPointer<int>(QUERY_NORM_ATTR_INDEX);
+    mlaPrologV3Context.queryNormFlag = attrs->GetAttrPointer<bool>(QUERY_NORM_ATTR_INDEX);
 
     mlaPrologV3Context.weightQuantMode = attrs->GetAttrPointer<int>(WEIGHT_QUANT_MODE_INDEX);
     mlaPrologV3Context.kvQuantMode = attrs->GetAttrPointer<int>(KV_QUANT_MODE_INDEX);
@@ -562,7 +575,6 @@ ge::graphStatus MlaPrologV3Tiling::ConvertContext(gert::TilingContext &context, 
     mlaPrologV3Context.ckvkrRepoMode = attrs->GetAttrPointer<int>(CKVKR_REPO_MODE_INDEX);
     mlaPrologV3Context.quantScaleRepoMode = attrs->GetAttrPointer<int>(QUANT_SCALE_REPO_MODE_INDEX);
     mlaPrologV3Context.tileSize = attrs->GetAttrPointer<int>(TILE_SIZE_INDEX);
-    mlaPrologV3Context.kNopeClipAlpha = attrs->GetAttrPointer<float>(K_NOPE_CLIP_ALPHA_INDEX);
     mlaPrologV3Context.qcQrScale = attrs->GetAttrPointer<float>(QCQR_SCALE_INDEX);
     mlaPrologV3Context.kcScale = attrs->GetAttrPointer<float>(KC_SCALE_INDEX);
 
@@ -573,7 +585,6 @@ ge::graphStatus MlaPrologV3Tiling::ConvertContext(gert::TilingContext &context, 
     int32_t quantScaleRepoMode = *mlaPrologV3Context.quantScaleRepoMode;
     int32_t tileSize = *mlaPrologV3Context.tileSize;
 
-    float kNopeClipAlpha = *mlaPrologV3Context.kNopeClipAlpha;
     float qcQrScale = *mlaPrologV3Context.qcQrScale;
     float kcScale = *mlaPrologV3Context.kcScale;
 
@@ -604,8 +615,6 @@ void MlaPrologV3Tiling::ConvertRequiredParams(gert::TilingContext &context, MlaP
     mlaPrologV3Context.ropeSin.shape = context.GetRequiredInputShape(ROPE_SIN_INPUT_INDEX);
     mlaPrologV3Context.ropeCos.desc = context.GetRequiredInputDesc(ROPE_COS_INPUT_INDEX);
     mlaPrologV3Context.ropeCos.shape = context.GetRequiredInputShape(ROPE_COS_INPUT_INDEX);
-    mlaPrologV3Context.cacheIndex.desc = context.GetRequiredInputDesc(CACHE_INDEX_INPUT_INDEX);
-    mlaPrologV3Context.cacheIndex.shape = context.GetRequiredInputShape(CACHE_INDEX_INPUT_INDEX);
     mlaPrologV3Context.kvCache.desc = context.GetRequiredInputDesc(KV_CACHE_INPUT_INDEX);
     mlaPrologV3Context.kvCache.shape = context.GetRequiredInputShape(KV_CACHE_INPUT_INDEX);
     mlaPrologV3Context.krCache.desc = context.GetRequiredInputDesc(KR_CACHE_INPUT_INDEX);
@@ -623,6 +632,8 @@ void MlaPrologV3Tiling::ConvertRequiredParams(gert::TilingContext &context, MlaP
 
 void MlaPrologV3Tiling::ConvertOptionalParams(gert::TilingContext &context, MlaPrologV3Context &mlaPrologV3Context)
 {
+    mlaPrologV3Context.cacheIndex.desc = context.GetOptionalInputDesc(CACHE_INDEX_INPUT_INDEX);
+    mlaPrologV3Context.cacheIndex.shape = context.GetOptionalInputShape(CACHE_INDEX_INPUT_INDEX);
     mlaPrologV3Context.dequantScaleX.desc = context.GetOptionalInputDesc(DEQUANT_SCALE_X_INDEX);
     mlaPrologV3Context.dequantScaleX.shape = context.GetOptionalInputShape(DEQUANT_SCALE_X_INDEX);
     mlaPrologV3Context.dequantScaleWDq.desc = context.GetOptionalInputDesc(DEQUANT_SCALE_W_DQ_INDEX);
@@ -639,6 +650,8 @@ void MlaPrologV3Tiling::ConvertOptionalParams(gert::TilingContext &context, MlaP
     mlaPrologV3Context.smoothScalesCq.shape = context.GetOptionalInputShape(SMOOTH_SCALES_CQ_INDEX);
     mlaPrologV3Context.actualSeqLen.desc = context.GetOptionalInputDesc(ACTUAL_SEQ_LEN_INDEX);
     mlaPrologV3Context.actualSeqLen.shape = context.GetOptionalInputShape(ACTUAL_SEQ_LEN_INDEX);
+    mlaPrologV3Context.kNopeClipAlpha.desc = context.GetOptionalInputDesc(K_NOPE_CLIP_ALPHA_INDEX);
+    mlaPrologV3Context.kNopeClipAlpha.shape = context.GetOptionalInputShape(K_NOPE_CLIP_ALPHA_INDEX);
     // only v1 does not support dequantScaleQNope
     if (strcmp(mlaPrologV3Context.opType, V1_OP_NAME) == 0) {
         mlaPrologV3Context.dequantScaleQNope.desc = nullptr;

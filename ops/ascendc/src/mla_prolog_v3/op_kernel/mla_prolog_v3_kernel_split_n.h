@@ -73,17 +73,18 @@ public:
                                 __gm__ uint8_t *rmsnormGammaCkv,
                                 __gm__ uint8_t *ropeSin,
                                 __gm__ uint8_t *ropeCos,
-                                __gm__ uint8_t *cacheIndex,
                                 __gm__ uint8_t *kvCache,
                                 __gm__ uint8_t *krCache,
+                                __gm__ uint8_t *cacheIndex,
                                 __gm__ uint8_t *dequantScaleX,
                                 __gm__ uint8_t *dequantScaleWDq,
                                 __gm__ uint8_t *deqScaleQcQrW,
-                                __gm__ uint8_t * dequantScaleWDkvkr,
+                                __gm__ uint8_t *dequantScaleWDkvkr,
                                 __gm__ uint8_t *quantScaleCkv,
                                 __gm__ uint8_t *quantScaleCkr,
                                 __gm__ uint8_t *smoothScaleCq,
                                 __gm__ uint8_t *actualSeqLen,
+                                __gm__ uint8_t *kNopeClipAlpha,
                                 __gm__ uint8_t *queryOut,
                                 __gm__ uint8_t *queryRopeOut,
                                 __gm__ uint8_t *dequantScaleQNopeOut,
@@ -97,7 +98,8 @@ private:
     __aicore__ inline void ScaleInit(__gm__ uint8_t *dequantScaleX,
         __gm__ uint8_t *dequantScaleWDq, __gm__ uint8_t *deqScaleQcQrW,
         __gm__ uint8_t *dequantScaleWDkvkr, __gm__ uint8_t *quantScaleCkv,
-        __gm__ uint8_t *quantScaleCkr, __gm__ uint8_t *smoothScaleCq);
+        __gm__ uint8_t *quantScaleCkr, __gm__ uint8_t *smoothScaleCq,
+        __gm__ uint8_t *kNopeClipAlpha);
     __aicore__ inline void WorkspaceInit(__gm__ uint8_t *workspace);
     // __aicore__ inline void UpdateActualSeq(int64_t fusedStartOffset);
     __aicore__ inline void MmParamInit();
@@ -231,6 +233,7 @@ private:
     GlobalTensor<float> quantScaleCkrGm_;
 
     GlobalTensor<int32_t> actualSeqLenGm_;
+    GlobalTensor<float> kNopeClipAlphaGm_;
 
     GlobalTensor<rmsNormCqOutputType> rmsNormCqResGm_;
     GlobalTensor<mmCqOutputType> mmCqResGm_;
@@ -291,13 +294,14 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::Init(
     __gm__ uint8_t *weightUqQr, __gm__ uint8_t *weightUk,
     __gm__ uint8_t *weightDkvKr, __gm__ uint8_t *rmsnormGammaCq,
     __gm__ uint8_t *rmsnormGammaCkv, __gm__ uint8_t *ropeSin,
-    __gm__ uint8_t *ropeCos, __gm__ uint8_t *cacheIndex,
-    __gm__ uint8_t *kvCache, __gm__ uint8_t *krCache,
+    __gm__ uint8_t *ropeCos, __gm__ uint8_t *kvCache,
+    __gm__ uint8_t *krCache,  __gm__ uint8_t *cacheIndex,
     __gm__ uint8_t *dequantScaleX, __gm__ uint8_t *dequantScaleWDq,
     __gm__ uint8_t *deqScaleQcQrW, __gm__ uint8_t *dequantScaleWDkvkr,
     __gm__ uint8_t *quantScaleCkv, __gm__ uint8_t *quantScaleCkr,
     __gm__ uint8_t *smoothScaleCq, __gm__ uint8_t *actualSeqLen,
-    __gm__ uint8_t *queryOut, __gm__ uint8_t *queryRopeOut,
+    __gm__ uint8_t *kNopeClipAlpha, __gm__ uint8_t *queryOut,
+    __gm__ uint8_t *queryRopeOut,
     __gm__ uint8_t *dequantScaleQNopeOut,
     __gm__ uint8_t *queryNormOut,
     __gm__ uint8_t *dequantScaleQNormOut,
@@ -323,7 +327,9 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::Init(
     rmsnormGammaCkvGm_.SetGlobalBuffer((__gm__ rmsNormGammaType *)rmsnormGammaCkv);
     ropeSinGm_.SetGlobalBuffer((__gm__ ropeSinCosType *)ropeSin);
     ropeCosGm_.SetGlobalBuffer((__gm__ ropeSinCosType *)ropeCos);
-    cacheIndexGm_.SetGlobalBuffer((__gm__ int64_t *)cacheIndex);
+    if constexpr (MLAPT::cacheMode != CACHE_MODE::ND) {
+        cacheIndexGm_.SetGlobalBuffer((__gm__ int64_t *)cacheIndex);
+    }
     kvCacheGm_.SetGlobalBuffer((__gm__ kvCacheType *)kvCache);
     krCacheGm_.SetGlobalBuffer((__gm__ krCacheType *)krCache);
     qrOutGm_.SetGlobalBuffer((__gm__ ropeOutputType *)queryRopeOut);
@@ -333,7 +339,7 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::Init(
     } else {
         mmQnResGm_.SetGlobalBuffer((__gm__ mmQnOutputType *)queryOut);
     }
-    if (baseParams_->queryNormFlag == 1) {
+    if (baseParams_->queryNormFlag) {
         rmsNormCqResGm_.SetGlobalBuffer((__gm__ mmQcQrInputType *)queryNormOut);
         if constexpr (std::is_same<mmQcQrInputType, int8_t>::value) {
             dequantScaleQNormGm_.SetGlobalBuffer((__gm__ dequantScaleQNormType *)dequantScaleQNormOut);
@@ -344,7 +350,7 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::Init(
     }
 
     ScaleInit(dequantScaleX, dequantScaleWDq, deqScaleQcQrW,
-        dequantScaleWDkvkr, quantScaleCkv, quantScaleCkr, smoothScaleCq);
+        dequantScaleWDkvkr, quantScaleCkv, quantScaleCkr, smoothScaleCq, kNopeClipAlpha);
     MmParamInit();
     WorkspaceInit(workspace);
     if ASCEND_IS_AIV {
@@ -359,7 +365,7 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::ScaleInit(
     __gm__ uint8_t *dequantScaleX, __gm__ uint8_t *dequantScaleWDq,
     __gm__ uint8_t *deqScaleQcQrW, __gm__ uint8_t *dequantScaleWDkvkr,
     __gm__ uint8_t *quantScaleCkv, __gm__ uint8_t *quantScaleCkr,
-    __gm__ uint8_t *smoothScaleCq) {
+    __gm__ uint8_t *smoothScaleCq, __gm__ uint8_t *kNopeClipAlpha) {
     if constexpr (std::is_same<mmInputType, int8_t>::value) {
         dequantScaleXGm_.SetGlobalBuffer((__gm__ float *)dequantScaleX);
         dequantScaleWDqGm_.SetGlobalBuffer((__gm__ float *)dequantScaleWDq);
@@ -370,6 +376,10 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::ScaleInit(
         deqScaleQcQrW_.SetGlobalBuffer((__gm__ float *)deqScaleQcQrW);
         quantScaleCkvGm_.SetGlobalBuffer((__gm__ float *)quantScaleCkv);
         quantScaleCkrGm_.SetGlobalBuffer((__gm__ float *)quantScaleCkr);
+    }
+
+    if constexpr (isPertile) {
+        kNopeClipAlphaGm_.SetGlobalBuffer((__gm__ float *)kNopeClipAlpha);
     }
 }
 
@@ -625,7 +635,7 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::WorkspaceInit(__gm__ uint8_t *w
                            static_cast<int64_t>(baseParams_->headSizeCq) * sizeof(mmCqOutputType);
     }
 
-    if (baseParams_->queryNormFlag == 0) {
+    if (!baseParams_->queryNormFlag) {
         rmsNormCqResGm_.SetGlobalBuffer((__gm__ rmsNormCqOutputType *)(workspace + workspaceOffset));
         workspaceOffset += static_cast<int64_t>(baseParams_->stepBatchSize) *
                            static_cast<int64_t>(baseParams_->headSizeCq) * sizeof(rmsNormCqOutputType);
@@ -777,9 +787,8 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::AicProcess(AicOffset &aicOffset
             static_cast<int64_t>(baseParams_->headSizeCkv) *
             static_cast<int64_t>(baseParams_->numHeadSize);
     }
-    if (unlikely (baseParams_->queryNormFlag == 1)) {
-        aicOffset.rmsNormCqResOffset += static_cast<int64_t>(baseParams_->stepBatchSize) *
-            static_cast<int64_t>(baseParams_->headSizeCq);
+    if (unlikely (baseParams_->queryNormFlag)) {
+        aicOffset.rmsNormCqResOffset += static_cast<int64_t>(baseParams_->stepBatchSize) * static_cast<int64_t>(baseParams_->headSizeCq);
     }
 }
 
@@ -789,7 +798,7 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::AivProcess(AivOffset &aivOffset
     int64_t batchOffset, int64_t curStepBatchSize, int64_t numHeadOffset, int64_t mmQnLoops) {
     int64_t tokenIndex = batchOffset + aivOffset.curBlockTokenOffset;
     int64_t rmsNormCqResOffset;
-    if (baseParams_->queryNormFlag == 1) {
+    if (baseParams_->queryNormFlag) {
         rmsNormCqResOffset = tokenIndex * baseParams_->headSizeCq;
     } else {
         rmsNormCqResOffset = aivOffset.rmsNormCqOffset;
@@ -1297,7 +1306,7 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::RmsNormCq(int64_t tokenIndex,
                  dequantTool_.deQuantScaleCqLocal_[curBlockTokenOffset * FP32_BLOCK_ELEMENT_NUM],
                  FP32_BLOCK_ELEMENT_NUM * curVecToken);
     }
-    if (unlikely (baseParams_->queryNormFlag == 1)) {
+    if (unlikely (baseParams_->queryNormFlag)) {
         if constexpr (std::is_same<mmQcQrInputType, int8_t>::value) {
             DataCopyPad(dequantScaleQNormGm_[stepTokenIndex], dequantScaleQcQr,
             {static_cast<uint16_t>(curVecToken), sizeof(dequantScaleQNormType), 0, 0});
@@ -1396,13 +1405,14 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::RmsNormAndScatterCkv(LocalTenso
         
         SetFlag<HardEvent::V_MTE2>(EVENT_ID0);
         WaitFlag<HardEvent::V_MTE2>(EVENT_ID0);
+        float kNopeClipAlpha = kNopeClipAlphaGm_.GetValue(0);
 
         if constexpr (std::is_same<mmCkvKrOutputType, int32_t>::value) {
             if (baseParams_->kvQuantMode == 3) {
                 PerTileQuantParams perTileQuantParams = {
                     static_cast<int32_t>(baseParams_->tileSize),                                // tileSize
                     static_cast<int32_t>(baseParams_->headSizeCkv / baseParams_->tileSize),     // tileNum
-                    baseParams_->kNopeClipAlpha,         // alpha
+                    kNopeClipAlpha,         // alpha
                     static_cast<uint32_t>(vectorRow_),   // row
                     baseParams_->headSizeCkv             // col
                 };
@@ -1421,7 +1431,7 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::RmsNormAndScatterCkv(LocalTenso
                 PerTileQuantParams perTileQuantParams = {
                     static_cast<int32_t>(baseParams_->tileSize),                                // tileSize
                     static_cast<int32_t>(baseParams_->headSizeCkv / baseParams_->tileSize),     // tileNum
-                    baseParams_->kNopeClipAlpha,         // alpha
+                    kNopeClipAlpha,         // alpha
                     static_cast<uint32_t>(vectorRow_),   // row
                     baseParams_->headSizeCkv             // col
                 };
@@ -1448,8 +1458,11 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::RmsNormAndScatterCkv(LocalTenso
     // Scatter(Ckv)
     // RmsNorm(Ckv) ──> Scatter(Ckv) ──> kv_cache_out
     if constexpr ((MLAPT::cacheMode == CACHE_MODE::PA_NZ) ||
-        (MLAPT::cacheMode == CACHE_MODE::PA_BSND)) {
+        (MLAPT::cacheMode == CACHE_MODE::PA_BSND) || (MLAPT::cacheMode == CACHE_MODE::ND)) {
         int64_t paTokenIndex = cacheIndexGm_(rmsNormAndScatterCkvParams.tokenIndex);
+        if constexpr (MLAPT::cacheMode == CACHE_MODE::ND) {
+            paTokenIndex = rmsNormAndScatterCkvParams.tokenIndex;
+        }
         ScatterCache<kvCacheType, (MLAPT::cacheMode == CACHE_MODE::PA_NZ)>(kvCacheGm_, outputLocal,
             ScatterCacheParams{baseParams_->blockSize, paTokenIndex, vectorRow_,
                 baseParams_->headSizeCkv, baseParams_->dtileSize});
@@ -1464,14 +1477,10 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::RmsNormAndScatterCkv(LocalTenso
             if (baseParams_->ckvkrRepoMode == 1) {
                 startColOffset += baseParams_->headSizeKr * sizeof(krCacheType);
             }
-            if constexpr ((MLAPT::cacheMode == CACHE_MODE::PA_NZ)) {
-                trap();
-                constexpr uint8_t col0 = ALIGN_BLOCK_SIZE / sizeof(kvCacheType);
-                startOffset = startColOffset / col0 * col0 * baseParams_->blockSize; // 列方向的偏移
-            } else {
+            if constexpr ((MLAPT::cacheMode != CACHE_MODE::PA_NZ)) {
                 startOffset = startColOffset;
             }
-            
+
             ScatterCacheUnAligned<kvCacheType, (MLAPT::cacheMode == CACHE_MODE::PA_NZ)>(
                 kvCacheGm_[startOffset], quantScaleCkvInt8Tensor,
                 ScatterCacheParams{baseParams_->blockSize, paTokenIndex, vectorRow_,
@@ -1564,8 +1573,12 @@ __aicore__ inline void MlaPrologV3SplitN<MLAPT>::RopeAndScatterKr(
     // scatter(Kr)
     // Rope(Kr) ──> Scatter(Kr) ──> kr_cache_out
     int64_t paTokenIndex;
-    if constexpr ((MLAPT::cacheMode == CACHE_MODE::PA_NZ) || (MLAPT::cacheMode == CACHE_MODE::PA_BSND)) {
+    if constexpr ((MLAPT::cacheMode == CACHE_MODE::PA_NZ) ||
+        (MLAPT::cacheMode == CACHE_MODE::PA_BSND) || (MLAPT::cacheMode == CACHE_MODE::ND)) {
         paTokenIndex = cacheIndexGm_(ropeAndScatterKrParams.tokenIndex);
+        if constexpr (MLAPT::cacheMode == CACHE_MODE::ND) {
+            paTokenIndex = ropeAndScatterKrParams.tokenIndex;
+        }
         if (baseParams_->kvQuantMode == 3 && baseParams_->ckvkrRepoMode == 1) {
             int64_t startOffset;
             if constexpr ((MLAPT::cacheMode == CACHE_MODE::PA_NZ)) {

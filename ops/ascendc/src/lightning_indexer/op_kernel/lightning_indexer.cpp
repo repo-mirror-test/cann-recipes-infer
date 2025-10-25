@@ -52,7 +52,7 @@ __global__ __aicore__ void lightning_indexer(__gm__ uint8_t *query, __gm__ uint8
                                  LI_LAYOUT(LAYOUT_T), LI_LAYOUT(K_LAYOUT_T));
     } else {
         INVOKE_LI_NO_KFC_OP_IMPL(LIPreload, bfloat16_t, bfloat16_t, int32_t, PAGE_ATTENTION, 
-                                 LI_LAYOUT(LAYOUT_T),LI_LAYOUT(K_LAYOUT_T));
+                                 LI_LAYOUT(LAYOUT_T), LI_LAYOUT(K_LAYOUT_T));
     }
 #endif
 }

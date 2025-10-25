@@ -51,10 +51,10 @@ namespace optiling {
         uint32_t mm2SingleCoreN;             // single headSizeCkv+headSizeKr（单核心矩阵乘2的N维度大小，Ckv+Kr头维度之和）
         uint32_t mm3SingleCoreN;             // single headSizeQc+headSizeQr（单核心矩阵乘3的N维度大小，Qc+Qr头维度之和）
         uint32_t mm4SingleCoreBatch;         // single numHeadSize（单核心矩阵乘4的批大小，对应单个头数量）
-        uint32_t queryNormFlag;
+        bool queryNormFlag;
         uint32_t kvQuantMode;
         uint32_t tileSize;
-        uint32_t ckvkrRepoMode; 
+        uint32_t ckvkrRepoMode;
         uint32_t quantScaleRepoMode;
         float reciprocalCq;                  // 1 / headSizeCq（headSizeCq的倒数，用于快速计算）
         float epsilonCq;                     // Cq计算的epsilon（数值稳定性参数）

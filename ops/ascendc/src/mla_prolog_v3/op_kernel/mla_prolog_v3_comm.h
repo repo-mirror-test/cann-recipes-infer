@@ -42,7 +42,7 @@ __aicore__ inline T Align(T num, T rnd)
 }
 
 enum class CACHE_MODE : std::uint8_t {
-    BNSD = static_cast<std::uint8_t>(0),
+    ND = static_cast<std::uint8_t>(0), // BSND/TND
     PA_BSND = static_cast<std::uint8_t>(1),
     PA_NZ = static_cast<std::uint8_t>(2),
     PA_BLK_BSND = static_cast<std::uint8_t>(3),
@@ -135,8 +135,8 @@ constexpr uint32_t L0C_PP_SIZE = 64 * 1024;
 
 /*
                                      非量化             半量化(kv非量化)       半量化(kv量化)         全量化(kv非量化)       全量化(kv量化)      半量化(kv per-tile量化)      全量化(kv per-tile量化)
-  cacheMode                    PA_BSND/PA_BLK_BSND    PA_BSND/PA_BLK_BSND  PA_BSND/PA_BLK_BSND   PA_BSND/PA_BLK_BSND   PA_BSND/PA_BLK_BSND         PA_BSND                      PA_BSND 
-                                /PA_NZ/PA_BLK_NZ       /PA_NZ/PA_BLK_NZ     /PA_NZ/PA_BLK_NZ      /PA_NZ/PA_BLK_NZ      /PA_NZ/PA_BLK_NZ                                                  
+  cacheMode                    PA_BSND/PA_BLK_BSND    PA_BSND/PA_BLK_BSND  PA_BSND/PA_BLK_BSND   PA_BSND/PA_BLK_BSND   PA_BSND/PA_BLK_BSND         PA_BSND                      PA_BSND
+                                /PA_NZ/PA_BLK_NZ       /PA_NZ/PA_BLK_NZ     /PA_NZ/PA_BLK_NZ      /PA_NZ/PA_BLK_NZ      /PA_NZ/PA_BLK_NZ
   enableDequantOpt                    false               true/false           true/false             true/false           true/false                true                       true
   enableGroupDequantOpt               false               true/false           true/false               false                false                   false                      false
   quantMode(后续适配)
@@ -147,21 +147,21 @@ constexpr uint32_t L0C_PP_SIZE = 64 * 1024;
   WdkvkrType(复用mmInputType)       bfloat16_t            bfloat16_t            bfloat16_t              int8_t               int8_t                bfloat16_t                    int8_t
   rmsNormGammaType                  bfloat16_t            bfloat16_t            bfloat16_t            bfloat16_t           bfloat16_t              bfloat16_t                  bfloat16_t
   gammaCkvType(复用rmsNormGammaType)bfloat16_t            bfloat16_t            bfloat16_t            bfloat16_t           bfloat16_t              bfloat16_t                  bfloat16_t
-  ropeSinCosType                    bfloat16_t            bfloat16_t            bfloat16_t            bfloat16_t           bfloat16_t              bfloat16_t                  bfloat16_t 
-  cosType(复用ropeSinCosType)       bfloat16_t            bfloat16_t            bfloat16_t            bfloat16_t           bfloat16_t              bfloat16_t                  bfloat16_t 
+  ropeSinCosType                    bfloat16_t            bfloat16_t            bfloat16_t            bfloat16_t           bfloat16_t              bfloat16_t                  bfloat16_t
+  cosType(复用ropeSinCosType)       bfloat16_t            bfloat16_t            bfloat16_t            bfloat16_t           bfloat16_t              bfloat16_t                  bfloat16_t
   cacheIndexType                      int64_t               int64_t               int64_t               int64_t              int64_t                 int64_t                     int64_t
   kvCacheType                       bfloat16_t            bfloat16_t              int8_t              bfloat16_t             int8_t                  int8_t                      int8_t
   krCacheType                       bfloat16_t            bfloat16_t              int8_t              bfloat16_t           bfloat16_t              bfloat16_t                  bfloat16_t
-  deqScaleXType                       float                 float                 float                 float                float                   float                       float  
-  deqScaleWdqType                     float                 float                 float                 float                float                   float                       float  
-  deqScaleWuqqrType                   float                 float                 float                 float                float                   float                       float  
-  deqScaleWdkvkrType                  float                 float                 float                 float                float                   float                       float  
-  quantScaleCkvType                   float                 float                 float                 float                float                   float                       float  
-  quantScaleCkrType                   float                 float                 float                 float                float                   float                       float  
-  smoothScaleCqType                   float                 float                 float                 float                float                   float                       float  
-  queryOutputType                   bfloat16_t            bfloat16_t              int8_t              bfloat16_t             int8_t                bfloat16_t                  bfloat16_t 
+  deqScaleXType                       float                 float                 float                 float                float                   float                       float
+  deqScaleWdqType                     float                 float                 float                 float                float                   float                       float
+  deqScaleWuqqrType                   float                 float                 float                 float                float                   float                       float
+  deqScaleWdkvkrType                  float                 float                 float                 float                float                   float                       float
+  quantScaleCkvType                   float                 float                 float                 float                float                   float                       float
+  quantScaleCkrType                   float                 float                 float                 float                float                   float                       float
+  smoothScaleCqType                   float                 float                 float                 float                float                   float                       float
+  queryOutputType                   bfloat16_t            bfloat16_t              int8_t              bfloat16_t             int8_t                bfloat16_t                  bfloat16_t
   ropeOutputType                    bfloat16_t            bfloat16_t            bfloat16_t            bfloat16_t           bfloat16_t              bfloat16_t                  bfloat16_t
-  dequantScaleQNopeType               float                 float                 float                 float                float                   float                       float  
+  dequantScaleQNopeType               float                 float                 float                 float                float                   float                       float
   queryNormType(复用mmQcQrInputType)bfloat16_t              int8_t                int8_t                int8_t               int8_t                  int8_t                      int8_t
   dequantScaleQNormType               float                 float                 float                 float                float                   float                       float
   mmInputType                       bfloat16_t            bfloat16_t            bfloat16_t              int8_t               int8_t                bfloat16_t                    int8_t
@@ -200,7 +200,9 @@ struct MLAPType {
     using ropeComputType = float;
     using ropeOutputType = bfloat16_t;
     using kvCacheType = C_T;           // kvcache的类型
-    using krCacheType = typename std::conditional<((std::is_same<X_T, int8_t>::value && std::is_same<C_T, int8_t>::value) || IS_PERTILE), bfloat16_t, C_T>::type; // krcache的类型
+    using krCacheType = typename std::conditional<
+        ((std::is_same<X_T, int8_t>::value && std::is_same<C_T, int8_t>::value) || IS_PERTILE),
+        bfloat16_t, C_T>::type;        // krcache的类型
     using dequantScaleQNopeType = float;      // dequantScaleQNope的类型
     using dequantScaleQNormType = float;      // dequantScaleQNope的类型
 
@@ -284,7 +286,7 @@ struct UsedBlockParams {
 
 struct CkvkrParams {
     int64_t tokenIndex;
-    int64_t offset; 
+    int64_t offset;
     int64_t curVecTokenIdx;
 };
 

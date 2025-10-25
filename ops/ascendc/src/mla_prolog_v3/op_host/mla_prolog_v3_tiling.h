@@ -48,11 +48,11 @@ constexpr uint32_t RMSNORM_GAMMA_CQ_INPUT_INDEX = 5;
 constexpr uint32_t RMS_NORM_GAMMA_CKV_INPUT_INDEX = 6;
 constexpr uint32_t ROPE_SIN_INPUT_INDEX = 7;
 constexpr uint32_t ROPE_COS_INPUT_INDEX = 8;
-constexpr uint32_t CACHE_INDEX_INPUT_INDEX = 9;
-constexpr uint32_t KV_CACHE_INPUT_INDEX = 10;
-constexpr uint32_t KR_CACHE_INPUT_INDEX = 11;
+constexpr uint32_t KV_CACHE_INPUT_INDEX = 9;
+constexpr uint32_t KR_CACHE_INPUT_INDEX = 10;
 
 // INPUT(OPTION)
+constexpr uint32_t CACHE_INDEX_INPUT_INDEX = 11;
 constexpr uint32_t DEQUANT_SCALE_X_INDEX = 12;
 constexpr uint32_t DEQUANT_SCALE_W_DQ_INDEX = 13;
 constexpr uint32_t DEQUANT_SCALE_W_UQ_QR_INDEX = 14;
@@ -61,6 +61,7 @@ constexpr uint32_t QUANT_SCALE_CKV_INDEX = 16;
 constexpr uint32_t QUANT_SCALE_CKR_INDEX = 17;
 constexpr uint32_t SMOOTH_SCALES_CQ_INDEX = 18;
 constexpr uint32_t ACTUAL_SEQ_LEN_INDEX = 19;
+constexpr uint32_t K_NOPE_CLIP_ALPHA_INDEX = 20;
 
 // OUTPUT
 constexpr uint32_t QUERY_OUTPUT_INDEX = 0;
@@ -82,9 +83,8 @@ constexpr uint32_t QUERY_QUANT_MODE_INDEX = 6;
 constexpr uint32_t CKVKR_REPO_MODE_INDEX = 7;
 constexpr uint32_t QUANT_SCALE_REPO_MODE_INDEX = 8;
 constexpr uint32_t TILE_SIZE_INDEX = 9;
-constexpr uint32_t K_NOPE_CLIP_ALPHA_INDEX = 10;
-constexpr uint32_t QCQR_SCALE_INDEX = 11;
-constexpr uint32_t KC_SCALE_INDEX = 12;
+constexpr uint32_t QCQR_SCALE_INDEX = 10;
+constexpr uint32_t KC_SCALE_INDEX = 11;
 
 constexpr uint32_t MLA_PROLOG_V3_DIM_INDEX_0 = 0;
 constexpr uint32_t MLA_PROLOG_V3_DIM_INDEX_1 = 1;
@@ -97,6 +97,8 @@ constexpr uint32_t MLA_PROLOG_V3_DIM_NUM_2 = 2;
 constexpr uint32_t MLA_PROLOG_V3_DIM_NUM_3 = 3;
 constexpr uint32_t MLA_PROLOG_V3_DIM_NUM_4 = 4;
 
+constexpr char CACHE_MODE_BSND[] {"BSND"};
+constexpr char CACHE_MODE_TND[] {"TND"};
 constexpr char CACHE_MODE_PA_BSND[] {"PA_BSND"};
 constexpr char CACHE_MODE_PA_NZ[] {"PA_NZ"};
 constexpr char CACHE_MODE_PA_BLK_BSND[] {"PA_BLK_BSND"};
@@ -105,6 +107,8 @@ constexpr char V1_OP_NAME[] {"MlaProlog"};
 constexpr char V2_OP_NAME[] {"MlaPrologV2"};
 constexpr char V3_OP_NAME[] {"MlaPrologV3"};
 
+constexpr uint32_t CACHE_MODE_BSND_LEN = sizeof(CACHE_MODE_BSND) - 1;
+constexpr uint32_t CACHE_MODE_TND_LEN = sizeof(CACHE_MODE_TND) - 1;
 constexpr uint32_t CACHE_MODE_PA_BSND_LEN = sizeof(CACHE_MODE_PA_BSND) - 1;
 constexpr uint32_t CACHE_MODE_PA_NZ_LEN = sizeof(CACHE_MODE_PA_NZ) - 1;
 constexpr uint32_t CACHE_MODE_PA_BLK_BSND_LEN = sizeof(CACHE_MODE_PA_BLK_BSND) - 1;
@@ -131,11 +135,12 @@ struct MlaPrologV3BaseShapeInfo {
 };
 
 enum class CACHE_MODE:uint8_t {
-    BNSD = 0,
+    BSND = 0,
     PA_BSND = 1,
     PA_NZ = 2,
     PA_BLK_BSND = 3,
-    PA_BLK_NZ = 4
+    PA_BLK_NZ = 4,
+    TND = 5
 };
 
 enum class EMPTY_TENSOR_MODE:uint8_t {
@@ -190,7 +195,7 @@ enum class QUANT_SCALE_REPO_MODE:int32_t {
 struct MlaPrologV3ScenarioInfo {
     bool isV1Flag_;
     bool batchSeqFusedFlag_;
-    uint32_t splitMFlag_;
+    uint32_t splitMFlag_ = 0;
     QUANT_MODE quantMode_;
     CACHE_MODE cacheMode_;
     EMPTY_TENSOR_MODE emptyTensorMode_;
@@ -248,9 +253,9 @@ struct MlaPrologV3Context {
     RequiredParaInfo rmsnormGammaCkv;
     RequiredParaInfo ropeSin;
     RequiredParaInfo ropeCos;
-    RequiredParaInfo cacheIndex;
     RequiredParaInfo kvCache;
     RequiredParaInfo krCache;
+    OptionalParaInfo cacheIndex;
     OptionalParaInfo dequantScaleX;
     OptionalParaInfo dequantScaleWDq;
     OptionalParaInfo dequantScaleWUqQr;
@@ -259,6 +264,7 @@ struct MlaPrologV3Context {
     OptionalParaInfo quantScaleCkr;
     OptionalParaInfo smoothScalesCq;
     OptionalParaInfo actualSeqLen;
+    OptionalParaInfo kNopeClipAlpha;
     RequiredParaInfo query;
     RequiredParaInfo queryRope;
     RequiredParaInfo kvCacheOut;
@@ -270,7 +276,7 @@ struct MlaPrologV3Context {
     const float *rmsNormEspilonCq;
     const float *rmsNormEspilonCkv;
     const char *cacheMode;
-    const int *queryNormFlag;
+    const bool *queryNormFlag;
 
     const int *weightQuantMode;
     const int *kvQuantMode;
@@ -279,7 +285,6 @@ struct MlaPrologV3Context {
     const int *quantScaleRepoMode;
     const int *tileSize;
 
-    const float *kNopeClipAlpha;
     const float *qcQrScale;
     const float *kcScale;
 
@@ -292,7 +297,6 @@ class MlaPrologV3Tiling {
 public:
     MlaPrologV3Tiling() = default;
     ~MlaPrologV3Tiling() = default;
-
 
     ge::graphStatus RunBigKernelTiling(MlaPrologV3Context &context, MlaPrologV3TilingData* tilingData);
     static ge::graphStatus ConvertContext(gert::TilingContext &context, MlaPrologV3Context &mlaPrologV3Context);
@@ -339,7 +343,7 @@ private:
     float epsilonCq_ = 1.0;
     float reciprocalCkv_ = 0.00001f;
     float epsilonCkv_ = 1.0;
-    int32_t queryNormFlag_ = 0;
+    bool queryNormFlag_ = false;
 
     int32_t weightQuantMode_ = 0;
     KV_QUANT_MODE kvQuantMode_ = KV_QUANT_MODE::NO_QUANT;
@@ -347,7 +351,6 @@ private:
     int32_t ckvkrRepoMode_ = 0;
     int32_t quantScaleRepoMode_ = 0;
     int32_t tileSize_ = 128;
-    float kNopeClipAlpha_ = 1.0f;
     float qcQrScale_ = 1.0f;
     float kcScale_ = 1.0f;
 

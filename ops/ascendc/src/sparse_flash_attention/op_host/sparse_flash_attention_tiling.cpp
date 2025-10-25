@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file sparse_flash_attention_tiling.cc
+ * \file sparse_flash_attention_tiling.cpp
  * \brief
  */
 

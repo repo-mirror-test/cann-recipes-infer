@@ -8,11 +8,55 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#include "mla_prolog_v3_proto.h"
+#include <graph/utils/type_utils.h>
+#include <register/op_impl_registry.h>
+#include "log/ops_log.h"
 
 using namespace ge;
 
 namespace ops {
+// input
+constexpr uint32_t TOKEN_X_INDEX = 0;
+constexpr uint32_t WEIGHT_DQ_INDEX = 1;
+constexpr uint32_t WEIGHT_UQ_QR_INDEX = 2;
+constexpr uint32_t WEIGHT_UK_INDEX = 3;
+constexpr uint32_t ROPE_SIN_INDEX = 7;
+constexpr uint32_t KV_CACHE_INDEX = 9;
+constexpr uint32_t KR_CACHE_INDEX = 10;
+// output
+constexpr uint32_t QUERY_INDEX = 0;
+constexpr uint32_t QUERY_ROPE_INDEX = 1;
+constexpr uint32_t KV_CACHE_OUT_INDEX = 2;
+constexpr uint32_t KR_CACHE_OUT_INDEX = 3;
+constexpr uint32_t DEQUANT_SCALE_Q_NOPE_INDEX = 4;
+constexpr uint32_t QUERY_NORM_INDEX = 5;
+constexpr uint32_t DEQUANT_SCALE_Q_NORM_INDEX = 6;
+// Attribute
+constexpr uint32_t ATTR_QUERY_NORM_FLAG_INDEX = 3;
+constexpr uint32_t ATTR_WEIGHT_QUANT_MODE_FLAG_INDEX = 4;
+constexpr uint32_t ATTR_KV_QUANT_MODE_FLAG_INDEX = 5;
+
+// tmp
+constexpr uint32_t DIM_NUM_1 = 1;
+constexpr uint32_t DIM_NUM_2 = 2;
+constexpr uint32_t DIM_NUM_3 = 3;
+constexpr uint32_t DIM_NUM_4 = 4;
+constexpr uint32_t DIM_INDEX_0 = 0;
+constexpr uint32_t DIM_INDEX_1 = 1;
+constexpr uint32_t DIM_INDEX_2 = 2;
+constexpr uint32_t DIM_INDEX_3 = 3;
+
+struct MlaPrologV3ProtoShapeParam {
+    bool isBsMerge { false };
+    int64_t B { 0 };
+    int64_t T { 0 };
+    int64_t S { 0 };
+    int64_t N { 0 };
+    int64_t Hckv { 0 };
+    int64_t He { 0 };
+    int64_t Dr { 0 };
+    int64_t Hcq { 0 };
+};
 
 ge::graphStatus GetMlaPrologV3ShapeDim(const gert::InferShapeContext* context, MlaPrologV3ProtoShapeParam &shapeParam)
 {
@@ -114,10 +158,10 @@ ge::graphStatus SetMlaPrologV3ShapeDim(const MlaPrologV3ProtoShapeParam &shapePa
     OPS_LOG_E_IF_NULL(context, dequantScaleQNormShape, return ge::GRAPH_FAILED)
 
     OPS_LOG_E_IF_NULL(context, attrs, return ge::GRAPH_FAILED);
-    auto queryNormFlagPtr = attrs->GetAttrPointer<int>(ATTR_QUERY_NORM_FLAG_INDEX);
-    const int queryNormFlag = (queryNormFlagPtr == nullptr) ? 0 : *queryNormFlagPtr;
+    auto queryNormFlagPtr = attrs->GetAttrPointer<bool>(ATTR_QUERY_NORM_FLAG_INDEX);
+    const bool queryNormFlag = (queryNormFlagPtr == nullptr) ? 0 : *queryNormFlagPtr;
 
-    if (queryNormFlag == 1) {
+    if (queryNormFlag) {
         if (shapeParam.isBsMerge) {
             // [T, Hcq]
             queryNormShape->SetDimNum(DIM_NUM_2);
@@ -134,7 +178,7 @@ ge::graphStatus SetMlaPrologV3ShapeDim(const MlaPrologV3ProtoShapeParam &shapePa
         auto weightUqQrDesc = context->GetInputDesc(WEIGHT_UQ_QR_INDEX);
         OPS_LOG_E_IF_NULL(context, weightUqQrDesc, return ge::GRAPH_FAILED)
 
-        if (weightQuantMode != 0) {
+        if (weightUqQrDesc->GetDataType() == ge::DT_INT8) {
             dequantScaleQNormShape->SetDimNum(DIM_NUM_2);
             dequantScaleQNormShape->SetDim(DIM_INDEX_0, shapeParam.T);
             dequantScaleQNormShape->SetDim(DIM_INDEX_1, DIM_NUM_1);
