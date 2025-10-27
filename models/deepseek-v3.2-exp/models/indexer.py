@@ -145,7 +145,7 @@ class Indexer(nn.Module):
 
         with npu_stream_switch(enable_multi_streams, "22"):
             # prolog for kv use multi streams
-            if not is_prefill:
+            if enable_multi_streams:
                 tng.scope.npu_wait_tensor(qr, query_states[0])
                 tng.scope.npu_wait_tensor(qr, key_states[0])
             # q process in new stream
@@ -159,7 +159,7 @@ class Indexer(nn.Module):
             q_pe = torch_npu.npu_interleave_rope(q_pe, cos, sin).view(bsz, -1, self.n_heads, self.rope_head_dim)
             q = torch.cat([q_pe, q_nope], dim=-1)
         with npu_stream_switch(enable_multi_streams, "33"):
-            if not is_prefill:
+            if enable_multi_streams:
                 tng.scope.npu_wait_tensor(x, q_b)
             weights = self.weights_proj(x.view(-1, self.dim))
 
@@ -193,8 +193,8 @@ class Indexer(nn.Module):
                                             for i in cp_input_dict["cp_reverse_index"]], dim=0)
                 query_dequant_scale_prev, query_dequant_scale_next = torch.split(query_dequant_scale, \
                 query_dequant_scale.size(1) // 2, dim=1)
-                query_dequant_scale_prev = query_dequant_scale_prev.view(-1, self.n_heads)
-                query_dequant_scale_next = query_dequant_scale_next.view(-1, self.n_heads) 
+                query_dequant_scale_prev = query_dequant_scale_prev.reshape(-1, self.n_heads)
+                query_dequant_scale_next = query_dequant_scale_next.reshape(-1, self.n_heads) 
                 c8_input_dict.update({
                                     "query_dequant_scale_prev": query_dequant_scale_prev,
                                     "query_dequant_scale_next": query_dequant_scale_next,
@@ -240,8 +240,8 @@ class Indexer(nn.Module):
             q = q.flatten(0, 1).unsqueeze(0)
             weights = weights.view(bsz, -1, weights.shape[-1])
             weights_prev, weights_next = torch.split(weights, weights.size(1) // 2, dim=1)
-            weights_prev = weights_prev.view(-1, weights_prev.shape[-1])
-            weights_next = weights_next.view(-1, weights_next.shape[-1])
+            weights_prev = weights_prev.reshape(-1, weights_prev.shape[-1])
+            weights_next = weights_next.reshape(-1, weights_next.shape[-1])
             q_prev, q_next = torch.split(q, q.size(1) // 2, dim=1)
             indexer_input.update({
                 "q": q_prev.view(bsz, -1, self.n_heads, q.shape[-1]),
@@ -264,33 +264,6 @@ class Indexer(nn.Module):
         else:
             indexer_input.update({"q": q, "weights": weights})
             return indexer_func(**indexer_input)
-
-    def forward_normal(
-        self,
-        x: torch.Tensor,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        k_proj: torch.Tensor,
-        end_pos: int,
-        mask: Optional[torch.Tensor],
-        is_prefill: bool,
-        **kwargs
-    ):
-        bsz, seqlen, _ = x.size()
-        k = k.view(bsz, -1, 1, self.head_dim)
-
-        enable_multi_streams = self.enable_multi_streams and not is_prefill
-        with npu_stream_switch(enable_multi_streams, "33"):
-            if not is_prefill and self.enable_gegraph:
-                tng.scope.npu_wait_tensor(x, k_proj)
-            weights = self.weights_proj(x) * self.n_heads ** -0.5  # [b,s,64]
-            weights = weights.unsqueeze(-1) * self.softmax_scale   # [b,s,64,1]
-        index_score = self.fp8_index(q, weights, k)
-        if mask is not None:
-            index_score += mask.squeeze(1)
-        topk_indices = index_score.topk(min(self.index_topk, end_pos), dim=-1)[1]
-
-        return topk_indices
     
     def forward_fusion(
         self,
