@@ -129,6 +129,124 @@ class Indexer(nn.Module):
         c8_input_dict: Optional[Dict] = None,
         is_prefill: bool = True,
     ):
+        input_args = {
+            "x": x,
+            "qr": qr,
+            "actual_seq_lengths_kv": actual_seq_lengths_kv,
+            "kv_len": kv_len,
+            "cos_sin": cos_sin,
+            "position_ids": position_ids,
+            "query_states": query_states,
+            "key_states": key_states,
+            "past_key_values_indexer": past_key_values_indexer,
+            "past_key_scales_indexer": past_key_scales_indexer,
+            "mask": mask,
+            "slot_mapping": slot_mapping,
+            "block_table": block_table,
+            "actual_seq_lengths_q": actual_seq_lengths_q,
+            "cp_input_dict": cp_input_dict,
+            "c8_input_dict": c8_input_dict,
+            "is_prefill": is_prefill,
+        }
+
+        # indexer_prolog_pypto fusion ops only enabled under W8A8C8 scenario in decode stage
+        enable_indexer_prolog_pypto = self.enable_pypto and self.kv_cache_c8
+        if is_prefill or not enable_indexer_prolog_pypto:
+            forward_func = self.prefill_decode_ascendc
+        else:
+            import custom_pypto
+            forward_func = self.decode_indexer_prolog_pypto
+
+        return forward_func(**input_args)
+
+    def decode_indexer_prolog_pypto(
+        self,
+        x: torch.Tensor,
+        qr: torch.Tensor,
+        actual_seq_lengths_kv: torch.Tensor,
+        kv_len: torch.Tensor,
+        cos_sin: torch.Tensor,
+        position_ids: torch.Tensor,
+        query_states: torch.Tensor,
+        key_states: torch.Tensor,
+        past_key_values_indexer: Optional[List[torch.FloatTensor]],
+        past_key_scales_indexer: Optional[List[torch.FloatTensor]],
+        mask: Optional[torch.Tensor],
+        slot_mapping: torch.Tensor,
+        block_table: Optional[torch.Tensor] = None,
+        actual_seq_lengths_q: Optional[torch.Tensor] = None,
+        cp_input_dict: Optional[Dict] = None,
+        c8_input_dict: Optional[Dict] = None,
+        is_prefill: bool = True,
+    ):
+        x = x.view(kv_len.shape[0], -1, self.dim)
+        bsz, seqlen, _ = x.size()
+        cos, sin = cos_sin
+        cos = cos.view(-1, 1, 1, self.rope_head_dim)
+        sin = sin.view(-1, 1, 1, self.rope_head_dim)
+
+        past_key_states = past_key_values_indexer[self.layer_idx][0]
+        past_key_scales = past_key_scales_indexer[self.layer_idx][0]
+
+        res = torch.ops.custom_pypto.npu_lightning_indexer_prolog_pto(
+            token_x=x.view(-1, self.dim),
+            q_norm=qr.view(-1, self.q_lora_rank),
+            q_norm_scale=c8_input_dict.get("pertoken_scale", None),
+            wq_b=self.wq_b.weight,
+            wq_b_scale=self.wq_b.weight_scale,
+            wk=self.wk.weight,
+            weights_proj=self.weights_proj.weight,
+            ln_gamma_k=self.k_norm.weight,
+            ln_beta_k=self.k_norm.bias,
+            cos_idx_rope=cos.squeeze(1).squeeze(1),
+            sin_idx_rope=sin.squeeze(1).squeeze(1),
+            hadamard_q=self.hadamard_matrix,
+            hadamard_k=self.hadamard_matrix,
+            idx_k_cache=past_key_states,
+            idx_k_scale_cache=past_key_scales,
+            idx_k_cache_index=slot_mapping.view(-1),
+            layernorm_epsilon_k=self.k_norm.eps,
+            layout_query="TND",
+            layout_key="PA_BSND"
+        )
+        q = res[0]
+        query_dequant_scale = res[1]
+        weights = res[2]
+
+        li_ops_input = {}
+        indexer_func = self.li_fusion
+        li_ops_input.update({"key_dequant_scale": past_key_scales,
+                              "query_dequant_scale": query_dequant_scale.view(-1, self.n_heads),
+                                })
+        li_ops_input.update({"actual_seq_lengths_query": actual_seq_lengths_q,
+                            "actual_seq_lengths_kv": actual_seq_lengths_kv,
+                            "k": past_key_states,
+                            "block_table": block_table,
+                            "is_prefill": is_prefill,
+                            })
+        li_ops_input.update({"q": q, "weights": weights})
+        return indexer_func(**li_ops_input)
+
+    def prefill_decode_ascendc(
+        self,
+        x: torch.Tensor,
+        qr: torch.Tensor,
+        actual_seq_lengths_kv: torch.Tensor,
+        kv_len: torch.Tensor,
+        cos_sin: torch.Tensor,
+        position_ids: torch.Tensor,
+        query_states: torch.Tensor,
+        key_states: torch.Tensor,
+        past_key_values_indexer: Optional[List[torch.FloatTensor]],
+        past_key_scales_indexer: Optional[List[torch.FloatTensor]],
+        mask: Optional[torch.Tensor],
+        slot_mapping: torch.Tensor,
+        block_table: Optional[torch.Tensor] = None,
+        actual_seq_lengths_q: Optional[torch.Tensor] = None,
+        cp_input_dict: Optional[Dict] = None,
+        c8_input_dict: Optional[Dict] = None,
+        is_prefill: bool = True,
+    ):
         x = x.view(kv_len.shape[0], -1, self.dim)
         bsz, seqlen, _ = x.size()
         if self.cp_size > 1 and is_prefill:
@@ -137,10 +255,6 @@ class Indexer(nn.Module):
             cos, sin = cos_sin
         cos = cos.view(-1, 1, 1, self.rope_head_dim)
         sin = sin.view(-1, 1, 1, self.rope_head_dim)
-        if is_prefill:
-            end_pos = seqlen
-        else:
-            end_pos = actual_seq_lengths_kv[0]
         enable_multi_streams = self.enable_multi_streams and not is_prefill
 
         with npu_stream_switch(enable_multi_streams, "22"):
@@ -226,7 +340,7 @@ class Indexer(nn.Module):
             # note: tnd layerout, actual_seq_lengths_q use cumsum indices
             seq_qlen_with_pad = torch.tensor([seqlen for _ in range(bsz)], dtype=kv_len.dtype, device=kv_len.device)
             actual_seq_lengths_kv = seq_qlen_with_pad
-        indexer_func = self.forward_fusion
+        indexer_func = self.li_fusion
         indexer_input.update({"actual_seq_lengths_query": actual_seq_lengths_q,
                             "actual_seq_lengths_kv": actual_seq_lengths_kv,
                             "k": past_key_states,
@@ -265,7 +379,7 @@ class Indexer(nn.Module):
             indexer_input.update({"q": q, "weights": weights})
             return indexer_func(**indexer_input)
     
-    def forward_fusion(
+    def li_fusion(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
