@@ -1,4 +1,4 @@
-# custom.npu\_lightning\_indexer\_pto
+# custom_pypto.npu\_lightning\_indexer\_pto
 
 ## 产品支持情况
 | 产品                                                         | 是否支持 |
@@ -22,7 +22,7 @@ $$
 ## 函数原型
 
 ```
-custom.npu_lightning_indexer_pto(query, key, weights, *, actual_seq_lengths_query=None, actual_seq_lengths_key=None, block_table=None, layout_query='BSND', layout_key='PA_BSND', sparse_count=2048, sparse_mode=3) -> Tensor
+custom_pypto.npu_lightning_indexer_pto(query, key, weights, *, actual_seq_lengths_query=None, actual_seq_lengths_key=None, block_table=None, layout_query='BSND', layout_key='PA_BSND', sparse_count=2048, sparse_mode=3) -> Tensor
 ```
 
 ## 参数说明
@@ -31,17 +31,17 @@ custom.npu_lightning_indexer_pto(query, key, weights, *, actual_seq_lengths_quer
 >
 -   **query**（`Tensor`）：表示 query，必选参数，不支持非连续的Tensor，数据格式支持ND，数据类型支持`bfloat16`。
 
--   **key**（`Tensor`）：表示 key，必选参数必选参数，不支持非连续的Tensor，数据格式支持ND，数据类型支持`bfloat16`。
+-   **key**（`Tensor`）：表示 key，必选参数，不支持非连续的Tensor，数据格式支持ND，数据类型支持`bfloat16`。
 
 -   **weights**（`Tensor`）：表示 weights，必选参数，不支持非连续的Tensor，数据格式支持ND，数据类型支持`bfloat16`。
 
 - <strong>*</strong>：代表其之前的参数是位置相关的，必须按照顺序输入，属于必选参数；其之后的参数是键值对赋值，与位置无关，属于可选参数（不传入会使用默认值）。
 
--   **actual\_seq\_lengths\_query**（`Tensor`）：表示不同 Batch 中 `query` 的有效 seqlen，可选参数，表示不同Batch中`query`的有效seqlen，数据类型支持`int32`。
+-   **actual\_seq\_lengths\_query**（`Tensor`）：可选参数，表示不同 Batch 中 `query` 的有效 seqlen，表示不同Batch中`query`的有效seqlen，数据类型支持`int32`。
 
--   **actual\_seq\_lengths\_key**（`Tensor`）：表示不同 Batch 中 `key` 和 `value` 的有效 seqlen，可选参数，表示不同Batch中`key`的有效seqlenK，数据类型支持`int32`。当前仅支持必传。
+-   **actual\_seq\_lengths\_key**（`Tensor`）：可选参数，表示不同 Batch 中 `key` 和 `value` 的有效 seqlenK，数据类型支持`int32`。当前仅支持必传。
 
--   **block\_table**（`Tensor`）：表示 PagedAttention 中 KV 存储使用的 block 映射表，可选参数，表示PageAttention中KV存储使用的block映射表，数据类型支持`int32`。数据格式支持ND。当前仅支持必传。
+-   **block\_table**（`Tensor`）：可选参数，表示 PagedAttention 中 KV 存储使用的 block 映射表，数据类型支持`int32`。数据格式支持ND。当前仅支持必传。
 
 -   **layout\_query**（`str`）：可选参数，用于标识输入`query`的数据排布格式，默认值"BSND"。当前仅支持 "BSND"。
 

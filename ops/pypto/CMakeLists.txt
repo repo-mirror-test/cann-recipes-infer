@@ -5,7 +5,6 @@
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-# ======================================================================================================================
 
 cmake_minimum_required(VERSION 3.14)
 project(tile_fwk_ops)
@@ -85,6 +84,25 @@ if (ENABLE_BUILD_BINARY)
                                 -p ${BINARY_OUTPUT_PATH}/${COMPUTE_UNIT}/
                                 -o ${BINARY_OUTPUT_PATH}/config/${COMPUTE_UNIT}/ -s ${COMPUTE_UNIT}                        
                 )
+
+                # lightning_indexer_prolog_pto
+                add_custom_command(
+                        TARGET tile_fwk_impl POST_BUILD
+                        COMMAND bash ${TILE_FWK_OPS_ROOT_PATH}/scripts/kernels_compile.sh
+                                ${COMPUTE_UNIT}
+                                ${CMAKE_CURRENT_SOURCE_DIR}/src/lightning_indexer_prolog_pto/op_kernel/bin_param
+                                ${CMAKE_CURRENT_SOURCE_DIR}/python/tile_fwk_compiler.py
+                                ${CMAKE_CURRENT_BINARY_DIR}/libtile_fwk_impl.so
+                                ascendcpp_compile_op
+                                ${BINARY_OUTPUT_PATH}/${COMPUTE_UNIT}/lightning_indexer_prolog_pto
+                        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/cmake/utils/insert_simplified_keys.py
+                                -p ${BINARY_OUTPUT_PATH}/${COMPUTE_UNIT}/lightning_indexer_prolog_pto
+                        COMMAND ${CMAKE_COMMAND} -E make_directory ${BINARY_OUTPUT_PATH}/config/${COMPUTE_UNIT}/
+                        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/cmake/utils/gen_binary_info_config.py
+                                -p ${BINARY_OUTPUT_PATH}/${COMPUTE_UNIT}/
+                                -o ${BINARY_OUTPUT_PATH}/config/${COMPUTE_UNIT}/ -s ${COMPUTE_UNIT}                        
+                )
+                
                 # lightning_indexer_pto
                 add_custom_command(
                         TARGET tile_fwk_impl POST_BUILD
@@ -227,10 +245,12 @@ if (BUILD_OPEN_PROJECT AND ENABLE_BUILD_HOST)
                         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/op_impl/ai_core/tbe/config/${COMPUTE_UNIT}
                         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/src/deepseek_indexer_attention/op_host/op_store/deepseek_indexer_attention_store.json ${CMAKE_INSTALL_PREFIX}/op_impl/ai_core/tbe/config/${COMPUTE_UNIT}/
                         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/src/lightning_indexer_pto/op_host/op_store/lightning_indexer_store.json ${CMAKE_INSTALL_PREFIX}/op_impl/ai_core/tbe/config/${COMPUTE_UNIT}/
+                        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/src/lightning_indexer_prolog_pto/op_host/op_store/lightning_indexer_prolog_store.json ${CMAKE_INSTALL_PREFIX}/op_impl/ai_core/tbe/config/${COMPUTE_UNIT}/
                         COMMAND echo "Finish building op store of ${COMPUTE_UNIT}."
                 )
         endforeach()
 endif ()
 
 add_subdirectory(src/lightning_indexer_pto)
+add_subdirectory(src/lightning_indexer_prolog_pto)
 add_subdirectory(src/deepseek_indexer_attention)

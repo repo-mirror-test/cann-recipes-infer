@@ -71,7 +71,7 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
     }
 
     LOOP("INDEX_LOOP_BATCH", FunctionType::DYNAMIC_LOOP, bIdx, LoopRange(b)) {
-        auto curSeq = GetInputData(actSeqKey, {bIdx});
+        auto curSeq = GetTensorData(actSeqKey, {bIdx});
 
         LOOP("INDEX_LOOP_S1", FunctionType::DYNAMIC_LOOP, s1Idx, LoopRange(s1)) {
             // casual inference
@@ -89,7 +89,7 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
                     // static unrolling
                     for (int subblockIdx = 0; subblockIdx < unrollLength; subblockIdx++) {
                         auto blockIdx = firstBlockIdx + subblockIdx;
-                        SymbolicScalar curBlockIdx = GetInputData(blockTable, {bIdx, blockIdx});
+                        SymbolicScalar curBlockIdx = GetTensorData(blockTable, {bIdx, blockIdx});
                         auto curK = View(key2D, {blockSize, indexD},
                             {std::min(blockSize, effSeq - (blockIdx * blockSize)), indexD},
                             {curBlockIdx * blockSize, n2Idx * indexD});
@@ -109,7 +109,8 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
                     auto mmRes = Concat(concatSrcs, -1); // (group, superBlockSize)
 
                     TileShape::Current().SetVecTile(tileConfig.v1Tile);
-                    auto reluRes = Relu(mmRes);       // (group, superBlockSize)
+                    auto reluRes = MaxS(mmRes, Element(DT_FP32, 0.0f));       // (group, superBlockSize)
+
                     auto mulRes = Mul(reluRes, wB32); // (group, superBlockSize) * (group, 1) -> (group, superBlockSize)
                     auto sumRes = RowSumSingle(mulRes, 0); // (1, superBlockSize)
                     Assemble(sumRes, {bs1n2Offset, firstBlockIdx * blockSize}, localSum);
@@ -146,7 +147,7 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
         auto s1Idx = (bs1n2Offset % (s1 * n2)) / n2;
         auto n2Idx = bs1n2Offset % n2;
 
-        auto curSeq = GetInputData(actSeqKey, {bIdx});
+        auto curSeq = GetTensorData(actSeqKey, {bIdx});
         auto casualOffset = s1 - s1Idx - 1;
         auto effSeq = curSeq - casualOffset;
 
@@ -156,7 +157,7 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
         TileShape::Current().SetVecTile({1, tileSize});
         LOOP("2K_TOPK", FunctionType::DYNAMIC_LOOP, unused, LoopRange(lengthIsLE2K)) {
             (void)unused;
-            ConfigManager::SetProgramConfig(SG_SKIP_PARTITION, true);
+            config::SetPassOption(SG_SKIP_PARTITION, true);
             LOOP("2K_TOPK_PAD", FunctionType::DYNAMIC_LOOP, unused1, LoopRange(1)) {
                 (void)unused1;
                 TileShape::Current().SetVecTile({1, length2K});
@@ -166,7 +167,7 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
                 Assemble(Assign(ax), {bs1n2Offset, 0}, padX2K);
                 Assemble(bx, {bs1n2Offset, effSeq}, padX2K);
             }
-            ConfigManager::SetProgramConfig(SG_SKIP_PARTITION, false);
+            config::SetPassOption(SG_SKIP_PARTITION, false);
             LOOP("2K_TOPK_SORT", FunctionType::DYNAMIC_LOOP, unused2, LoopRange(1)) {
                 (void)unused2;
                 auto [res, tmp] = TopKSort(View(padX2K, {1, length2K}, {bs1n2Offset, 0}), 0);
@@ -198,7 +199,7 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
         TileShape::Current().SetVecTile({1, tileSize});
         LOOP("8K_TOPK", FunctionType::DYNAMIC_LOOP, unused, LoopRange(lengthIsGT2K * lengthIsLE8K)) {
             UNUSED(unused);
-            ConfigManager::SetProgramConfig(SG_SKIP_PARTITION, true);
+            config::SetPassOption(SG_SKIP_PARTITION, true);
 
             LOOP("8K_TOPK_PAD", FunctionType::DYNAMIC_LOOP, unused1, LoopRange(1)) {
                 (void)unused1;
@@ -209,7 +210,7 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
                 Assemble(Assign(ax), {bs1n2Offset, 0}, padX8K);
                 Assemble(bx, {bs1n2Offset, effSeq}, padX8K);
             }
-            ConfigManager::SetProgramConfig(SG_SKIP_PARTITION, false);
+            config::SetPassOption(SG_SKIP_PARTITION, false);
 
             LOOP("8K_TOPK_SORT", FunctionType::DYNAMIC_LOOP, unused2, LoopRange(1)) {
                 (void)unused2;
@@ -266,7 +267,7 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
             UNUSED(unused);
             auto xStartOffset = numOf8KFullBlock * length8K;
             auto tailBlockLength = effSeq - xStartOffset;
-            ConfigManager::SetProgramConfig(SG_SKIP_PARTITION, true);
+            config::SetPassOption(SG_SKIP_PARTITION, true);
 
             LOOP("128K_TO_32K_TAIL_PAD", FunctionType::DYNAMIC_LOOP, unused0, LoopRange(1)) {
                 UNUSED(unused0);
@@ -278,7 +279,7 @@ void LightningIndexerTopkImpl(const Tensor &query, const Tensor &key, const Tens
                 Assemble(Assign(ax), {bs1n2Offset, 0}, padX8K);
                 Assemble(bx, {bs1n2Offset, tailBlockLength}, padX8K);
             }
-            ConfigManager::SetProgramConfig(SG_SKIP_PARTITION, false);
+            config::SetPassOption(SG_SKIP_PARTITION, false);
 
             LOOP("128K_TO_32K_TAIL_SORT", FunctionType::DYNAMIC_LOOP, unused0, LoopRange(1)) {
                 UNUSED(unused0);

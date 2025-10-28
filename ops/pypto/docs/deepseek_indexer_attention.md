@@ -1,4 +1,4 @@
-# custom.npu_sparse_attention_pto
+# custom_pypto.npu_sparse_attention_pto
 
 ## 产品支持情况
 | 产品                                                         | 是否支持 |
@@ -12,10 +12,10 @@
 ### 简介
 我们对 DeepSeek-V3.2-Exp 进行了拆解，该模型采用了一种细粒度稀疏注意力机制，将基于 token 级别的细粒度sparse attention与Lightning Indexer相结合，并将其分解为四个模块：MLA Prolog, Indexer Prolog, Lightning Indexer and Sparse Flash Attention。
 
-### MLA prolog
+### MLA Prolog
 MLA Prolog 模块将hidden状态 $\bold{X}$ 转换为查询投影 $\bold{q}$、键投影 $\bold{k}$ 和值投影 $\bold{v}$，其结构与 DeepSeek V3 的架构一致。在解码阶段，采用了权重吸收技术。
 
-### indexer prolog
+### Indexer Prolog
 
 Indexer Prolog 模块将hidden状态 $\bold{X}$ 投影为查询索引 $\bold{q}_{index, h}$ 和键索引 $\bold{k}_{index}$ 的表示。该变换遵循如下公式：旋转位置嵌入（RoPE）仅应用于 $\bold{q}_{index, h}$ 和 $\bold{k}_{index}$ 的头维度的后半部分。
 
@@ -27,7 +27,7 @@ $$
 \bold{k}_{index} = \text{RoPE}\left(\text{LayerNorm}\left(\bold{X}\cdot \bold{W}_k \right)\right)
 $$
 
-### lightning indexer
+### Lightning Indexer
 
 Lightning Indexer 模块采用一种类MLP的多查询注意力（Multi-Query Attention）机制来计算索引得分：
 
@@ -37,7 +37,7 @@ $$
 
 where $(w_1^i, \dots,w_{N_h}^i)^T = \bold{W}_{bias}\bold{x}_i$ represents query-dependent head-wise weights. In practice, we calculate $w_h^i$ in Indexer Prolog module.
 
-### sparse flash attention
+### Sparse Flash Attention
 
 对于每个查询 token $\bold{x}_i$，索引模块会为每个键值缓存项（表示键值对或 MLA 潜在表示）计算一个相关性得分 $I_{i,j}$。然后，通过将注意力机制应用于查询 token $\bold{x}_i$ 以及得分最高的前 $k$ 个缓存项，来计算输出 $\bold{o}_i$：
 
@@ -48,7 +48,7 @@ $$
 ## 函数原型
 
 ```
-custom.npu_sparse_attention_pto(x, w_dq, w_uq_qr, w_uk, w_dkv_kr, gamma_cq, gamma_ckv, sin, cos, cache_index, kv_cache, kr_cache, block_table, act_seqs, w_idx_qb, w_idx_k, w_idx_proj, in_gamma_k, in_beta_k,index_k_cache) -> Tensor
+custom_pypto.npu_sparse_attention_pto(x, w_dq, w_uq_qr, w_uk, w_dkv_kr, gamma_cq, gamma_ckv, sin, cos, cache_index, kv_cache, kr_cache, block_table, act_seqs, w_idx_qb, w_idx_k, w_idx_proj, in_gamma_k, in_beta_k,index_k_cache) -> Tensor
 ```
 
 ## 参数说明
@@ -90,9 +90,9 @@ custom.npu_sparse_attention_pto(x, w_dq, w_uq_qr, w_uk, w_dkv_kr, gamma_cq, gamm
 
 -   **w_idx_proj** （`Tensor`）：表示 Indexer 计算 weights 的权重，必选参数，不支持非连续的 Tensor，数据格式支持 NZ，数据类型支持`bfloat16`。
 
--   **in_gamma_k** （`Tensor`）：表示 Indexer 计算 key 的 layernorm 缩放，必选参数，不支持非连续的 Tensor，数据格式支持 ND，数据类型支持`bfloat16`。
+-   **ln_gamma_k** （`Tensor`）：表示 Indexer 计算 key 的 layernorm 缩放，必选参数，不支持非连续的 Tensor，数据格式支持 ND，数据类型支持`bfloat16`。
 
--   **in_beta_k** （`Tensor`）：表示 Indexer 计算 key 的 layernorm 偏移，必选参数，不支持非连续的 Tensor，数据格式支持 ND，数据类型支持`bfloat16`。
+-   **ln_beta_k** （`Tensor`）：表示 Indexer 计算 key 的 layernorm 偏移，必选参数，不支持非连续的 Tensor，数据格式支持 ND，数据类型支持`bfloat16`。
 
 -   **index_k_cache** （`Tensor`）：表示 Indexer 中 key 的缓存，必选参数，不支持非连续的 Tensor，数据格式支持 ND，数据类型支持`bfloat16`。
 

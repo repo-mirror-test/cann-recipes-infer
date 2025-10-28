@@ -18,39 +18,55 @@ from torch.types import Device, Number, _bool, _complex, _device, _dtype, _float
 from torchair._ge_concrete_graph import ge_apis as ge
 from torchair._ge_concrete_graph.fx2ge_converter import declare_supported, register_fx_node_ge_converter
 from torchair.ge._ge_graph import Tensor, TensorSpec, DataType
-from torchair._ge_concrete_graph.supported_declaration import _TypedTensor, F32, F16, F64, I32, I16, I64, I8, U8, \
-    BOOL, Support
+from torchair._ge_concrete_graph.supported_declaration import _TypedTensor, F32, F16, F64, I32, I16, I64, I8, U8, BOOL, Support
 from torchair._ge_concrete_graph.utils import dtype_promote
 from torchair.ge import attr
 
-
 # 为自定义算子注册converter，用于torch.compile 场景成图
 # 注意： meta_outputs形参名为固定写法，若写错会影响ge节点的输出dtype与shape推导
-@register_fx_node_ge_converter(torch.ops.custom_pypto.npu_lightning_indexer_pto.default)
-def convert_npu_lightning_indexer_pto(
-    query: Tensor,
-    key: Tensor,
-    weights: Tensor,
+@register_fx_node_ge_converter(torch.ops.custom_pypto.npu_lightning_indexer_prolog_pto.default)
+def convert_npu_lightning_indexer_prolog_pto(
+    token_x: Tensor,
+    q_norm: Tensor,
+    q_norm_scale: Tensor,
+    wq_b: Tensor,
+    wq_b_scale: Tensor,
+    wk: Tensor,
+    weights_proj: Tensor,
+    ln_gamma_k: Tensor,
+    ln_beta_k: Tensor,
+    cos_idx_rope: Tensor,
+    sin_idx_rope: Tensor,
+    hadamard_q: Tensor,
+    hadamard_k: Tensor,
+    idx_k_cache: Tensor,
+    idx_k_scale_cache: Tensor,
+    idx_k_cache_index: Tensor,
+    layernorm_epsilon_k: float,
     *,
-    actual_seq_lengths_query: Tensor = None,
-    actual_seq_lengths_key: Tensor = None,
-    block_table: Tensor = None,
-    layout_query: str = "BSND",
-    layout_key: str = "PA_BSND",
-    sparse_count: int = 2048,
-    sparse_mode: int = 3,
+    layout_query: str = "TND", 
+    layout_key: str = "PA_BSND", 
     meta_outputs: Any = None
-    ):
-
-    '''NB: npu_lightning_indexer_pto(Tensor query, Tensor key, Tensor weights, Tensor actual_seq_lengths_key, *, Tensor? block_table=None) -> Tensor'''
-
+):
     return torchair.ge.custom_op(
-        "LightningIndexerPto",
-        inputs={"x0": query,
-                "x1": key,
-                "x2": weights,
-                "x3": actual_seq_lengths_key,
-                "x4": block_table,
-                },
-        outputs=['y0']
+        "LightningIndexerPrologPto",
+        inputs={
+            "x0": token_x,
+            "x1": q_norm,
+            "x2": q_norm_scale,
+            "x3": wq_b,
+            "x4": wq_b_scale,
+            "x5": wk,
+            "x6": weights_proj,
+            "x7": ln_gamma_k,
+            "x8": ln_beta_k,
+            "x9": cos_idx_rope,
+            "x10": sin_idx_rope,
+            "x11": hadamard_q,
+            "x12": hadamard_k,
+            "x13": idx_k_cache,
+            "x14": idx_k_scale_cache,
+            "x15": idx_k_cache_index,
+            },
+        outputs=['y0','y1','y2']
     )

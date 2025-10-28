@@ -1,4 +1,4 @@
-# 基于 PyPTO 的 Lightning Indexer 和 Deepseek Indexer Attention 算子开发实践
+# NPU DeepSeek-V3.2-Exp PyPTO 融合算子开发优化实践
 
 ## 简介
 
@@ -117,67 +117,75 @@ MulS，Add和RowSum均为Vector操作，设置其Tile Shape为（32, 32），Mat
 
 ## 融合算子示例
 
-PyPTO 是 MPMD 的调度思想，和 Mega Kernel 思想类似，并支持开发者自行选定融合范围。本文以 DeepSeek-V3.2-Exp 中 Lightning Indexer 和 Deepseek Indexer Attention 的开发为实例，从融合算子开发者的视角，阐述在 PyPTO 的编程框架下，如何进行不同融合范围的算子的开发、以及通过 Human-In-The-Loop 的方式调优。
+PyPTO 是 MPMD 的调度思想，和 Mega Kernel 思想类似，并支持开发者自行选定融合范围。本文以 DeepSeek-V3.2-Exp 中 Indexer Prolog、Deepseek Indexer Attention 和 Lightning Indexer 的开发为实例，从融合算子开发者的视角，阐述在 PyPTO 的编程框架下，如何进行不同融合范围的算子的开发、以及通过 Human-In-The-Loop 的方式调优。
 
-### Lightning Indexer
+### Indexer Prolog
 
-Lightning Indexer 是 DeepSeek-V3.2-Exp 的 Deepseek Indexer Attention 计算的一部分。其计算流程图如下：
-
-<p align="center">
-  <img src="./figures/DeepseekLightningIndexer.png" width="40%" alt="示例图片">
-  <center>LightningIndexer</center>
-</p>
-
-1. 开发者根据计算流程图，进行融合算子编码开发，其对应的 PyPTO 源代码可以参考：[PyPTO Deepseek Lightning Indexer](../../../ops/pypto/src/lightning_indexer_pto/op_kernel/lightning_indexer_topk.cpp)。
-2. 基于 PyPTO 完成开发后， PyPTO 提供了完善的可视化集成开发环境，为开发者提供了不同阶段的产物。其中最为重要的是在 NPU 上运行得到的性能 Profiling 数据，即下图所示的泳道图，开发者通过泳道图可以分析融合算子中各部分的耗时，进而开展后续的性能调优。
+Indexer Prolog 是 DeepSeek-V3.2-Exp 的 Deepseek Indexer Attention 计算的前半部分，其对应的 PyPTO 源代码可以参考：[PyPTO Deepseek Lightning Indexer Prolog](../../../ops/pypto/src/lightning_indexer_prolog_pto/op_kernel/)，其计算流程图如下：
 
 <p align="center">
-  <img src="./figures/DeepseekLightningIndexer_0.png" width="60%" alt="示例图片">
-  <center>LightningIndexerSwimlane</center>
+  <img src="./figures/IndexerPrologQuant.png" width="60%" alt="示例图片">
+  <center>Indexer Prolog</center>
 </p>
 
-- 该泳道图的横轴表示时间，纵轴由一条条的泳道构成，一条泳道表示一个 AI 核。每条泳道上，随时间排布了对应 AI 核上执行的任务。
-- 每个任务上标记了一个标签，该标签是开发者写在源码中的语义标签 (Semantic Label)，用来辅助开发者理解当前硬件在执行的任务对应到哪一段前端代码。
-- 选中一个任务时，可以显示其前后依赖，用来观察任务的执行顺序、依赖间隔等是否合理。
-- 在泳道图上，可以看到不同颜色（即前端开发者写的不同代码）在同一时间不同计算核并行执行。传统的 SPMD 的调度要求同一时刻执行相同程序，而 MPMD 的运行时会根据实际运行时解依赖情况来调度任务执行，当一个任务解依赖完成后，就可以和在不同 AI 核上的任务异步并行执行。
+Indexer Prolog 的量化策略为：Q_b_proj 使用 W8A8 量化，其他 Linear 均不量化；Indexer Q 使用 A8 量化，Indexer Cache 使用 C8 量化；反量化因子以 FP16 存储；同时，在量化前，会进行 Hadamard 变换，Hadamard 变换在业界最新的低 bit 量化方案中十分常用，可以有效消除 outlier。
 
-#### 泳道图分析
+当前该融合算子在典型 Shape（4 Batch，MTP1，KV-Cache 64K 长度）下，kernel 性能已逼近理论的极限性能。
 
-当开发者写完 PyPTO 的代码，获取第一版的开箱性能后，需要根据泳道图分析可能的优化手段。上述泳道图展示的是在典型 Shape（4 Batch， KV-Cache 64K 长度）下的执行情况，直觉上能看到几个可以优化的“异常点”：
-1. MatMul 的 Cube 任务前序无依赖，为什么没有在第一时间执行？
-2. 主体的 Cube 和 Vector 任务都有三列，但是第三列只有部分核在工作，没有很好的对齐尾部。
-3. 最后的 TopK 似乎有严重的拖尾。
+#### 计算公式
 
-接下来，PyPTO 的开发者可以针对上述问题进行分析。
-- 通过对异常点 1 的分析，发现框架在处理数据搬运类 Operation 的时候，对不需要数据搬运的场景优化能力缺失。
-- 通过对异常点 2 的分析，发现由于是 4 Batch 64K 的场景，Page Attention 中给定的 Block Size 为 128，那么 MatMul 切分出了 `4*64*1024/128=2048` 个任务，程序中通过配置调整任务 L1 复用为 32，即最后有 `2048/32=64` 个任务，无法平均分配到各个核上（当前硬件共有 24 个 Cube 核）。
-- 同样由于是 4 Batch 的场景，且最终的 TopK 任务是单核的归并，所以在 Vector 核上有拖尾。我们可以尝试优化最后的排序、归并任务来减小拖尾。
+Indexer Q 的计算公式如下：
 
-#### 改进措施及结果
+$$
+\bold{q}, \bold{q}_{scale} = \text{DynamicQuant}(\text{Hadamard}(\text{RoPE}(\text{DeQuant}(\bold{q} \cdot \bold{w}_{qb}))))
+$$
 
-- 针对异常点 1 ，通过修改相应的 Pass ，补齐泛化能力，从而提升性能 (10%) 。与传统黑盒的调优框架不同， PyPTO 通过可视化的集成开发环境辅助开发者发现算子甚至框架的问题，开发者可以选择本地修复或者向开源社区反馈。
-- 针对异常点 2 ，开发者可以选择通过调整 L1 复用来达到特定 Shape 性能和动态 Shape 泛化性能的平衡。只是在本例中，L1 复用设置为 32 可以达到较好的泛化性。
-  ```cpp
-  Program::GetInstance().GetConfig().Set<int>(L1_REUSE, 32);
-  ```
-- 在对异常点 2 分析的过程中，发现 MatMul 的输出粒度为 128，进而发现 Tile Shape 同样设置为 128，这对硬件计算并不是最高效的，因此选择调整 Tile Shape，让 MatMul 把数据输出到连续内存后再进行后续大颗粒度的 Vector 运算，提升性能 (17%) 。
-  ```cpp
-  TileShape::Current().SetVecTile({64, 256});
-  ```
+Q 的计算采用了动态的 Per-Token-Head 量化，其中 Hadamard 变换通过矩阵右乘 hadamard_q 实现。而 $\bold{q}, \bold{w}_{qb}$ 均是 Int8 类型。
 
-在经过上述优化后，得到新版的泳道图如下，可以看到其性能有明显的优化 (27%) 。
+Indexer Cache 的计算公式如下：
+
+$$
+\bold{k}, \bold{k}_{scale} = \text{DynamicQuant}(\text{Hadamard}(\text{RoPE}(\text{LayerNorm}(\bold{x} \cdot \bold{w}_k))))
+$$
+
+Cache 的计算同样采用了动态的 Per-Token-Head 量化，其中 Hadamard 变换通过矩阵右乘 hadamard_k 实现。
+
+
+Indexer Weight 的计算公式如下：
+
+$$
+\bold{weight} = (\bold{x} \cdot \bold{w}_{proj}) * \text{scale}
+$$
+
+Weight 的计算没有采用量化，同时需要最后转化为 FP16 数据类型，供后续的 Lightning Indexer 计算使用。
+
+#### 泳道图与性能分析
+
+当前该融合算子在典型 Shape（4 Batch，MTP1，KV-Cache 64K 长度）下的性能 Profiling 数据，即泳道图如下图所示：
 
 <p align="center">
-  <img src="./figures/DeepseekLightningIndexer_1.png" width="60%" alt="示例图片">
-  <center>LightningIndexerSwimlaneNew</center>
+  <img src="./figures/IndexerPrologSwimLane.png" width="60%" alt="示例图片">
+  <center>Indexer Prolog Swimlane</center>
 </p>
+
+##### 计算流拆解
+Indexer Prolog 的计算流呈现如下特点：
+
+* 该计算包括了 Indexer Q, Indexer Cache 和 Indexer Weight 三个部分，三个部分互相独立，且每个部分串行执行。
+* 三条独立的计算流中，Indexer Q 的耗时最长，可以掩盖 Indexer Cache 和 Indexer Weight。
+* 在典型 Shape 下，计算量较小，并不会打满所有核进行计算，性能瓶颈在搬运上。
+
+##### 理论性能分析
+通过计算流拆解，可知该融合算子的性能由 Indexer Q 的耗时决定，其性能拆解如下：
+1. 第一部分是 (8, 1536) @ (1536, 8192) 的 Matmul 计算；该计算是 MTE bound，其理论的极限性能是 13us，但由于同时会并行 k 和 weight 的 Matmul 计算抢占带宽，从而可以说已逼近极致性能。
+2. 第二部分是 DeQuant（反量化）和 RoPE 的计算。该部分计算均在 Vector 核上。通过合适的 tile 切分，所有的计算均在 UB 上执行，不会产生 UB 和 GM 之间的冗余搬运，已达到极致性能。
+3. 第三部分是 Hadamard 变换，通过 (8, 64, 128) @ (1, 128, 128) 的 BatchMatmul 实现，该计算仍然是 MTE bound，已达到极致性能。
+4. 第四部分是 Int8 量化计算，该计算均在 Vector 核上。通过合适的 tile 切分，所有的计算均在 UB 上执行，已达到极致性能。
+
+综上所述，Indexer Prolog 的计算已经逼近理论极限性能。
 
 #### 下一步计划
-
-经过上述优化，泳道图已经比较密集。但是图中仍然有一些可优化的部分：
-
-* MatMul 的子图太大会导致后续 Vector 任务延迟开始，第一列 Cube 任务下方仍然有大量的空白时间。通过对原始计算逻辑的分析，得知这一部分可以并行，因此后续可以考虑通过控制复用程度对此进行优化。
-* 最后的 TopK 是通过排序归并得出的结果，可以考虑将排序部分放入前面 Vector 运算，最后只做归并，从而减小拖尾时间。
+仿照 Indexer Prolog 的调优过程，将其他几个子算子进行独立性能调优，达到极致性能。
 
 ### Deepseek Indexer Attention
 
@@ -185,7 +193,7 @@ Lightning Indexer 算子展示了 PyPTO 允许开发者可以控制算子融合�
 
 <p align="center">
   <img src="./figures/DeepseekIndexerAttention.png" width="50%" alt="示例图片">
-  <center>DeepseekIndexerAttention</center>
+  <center>Deepseek Indexer Attention</center>
 </p>
 
 Deepseek Indexer Attention 的计算逻辑图如图所示，主要由 MLA Prolog、Indexer Prolog、Lightning Indexer、Sparse Flash Attention 4 个相对独立的部分构成，可以看出在更大的范围内融合有更大的并行度可以挖掘。PyPTO 允许开发者先手动写这独立的四个部分，并通过框架将四个部分融合成一个完整的 Deepseek Indexer Attention 大算子。因此，大算子的开发策略如下：
@@ -239,3 +247,63 @@ Deepseek Indexer Attention 的计算逻辑图如图所示，主要由 MLA Prolog
 * 多个子图之间，仍然存在较大的空隙，需要再进一步的融合，将有数据依赖的计算整合到同一个 LOOP 中。
 
 期望经过以上优化后，泳道图中的任务会排布更加紧密。总的来说，性能优化是需要分多轮迭代的，每一轮解决关键的性能瓶颈点后，再基于新的泳道图进行分析、持续优化。
+
+### Lightning Indexer
+
+Lightning Indexer 是 DeepSeek-V3.2-Exp 的 Deepseek Indexer Attention 计算的一部分。其计算流程图如下：
+
+<p align="center">
+  <img src="./figures/DeepseekLightningIndexer.png" width="40%" alt="示例图片">
+  <center>LightningIndexer</center>
+</p>
+
+1. 开发者根据计算流程图，进行融合算子编码开发，其对应的 PyPTO 源代码可以参考：[PyPTO Deepseek Lightning Indexer](../../../ops/pypto/src/lightning_indexer_pto/op_kernel/lightning_indexer_topk.cpp)。
+2. 基于 PyPTO 完成开发后， PyPTO 提供了完善的可视化集成开发环境，为开发者提供了不同阶段的产物。其中最为重要的是在 NPU 上运行得到的性能 Profiling 数据，即下图所示的泳道图，开发者通过泳道图可以分析融合算子中各部分的耗时，进而开展后续的性能调优。
+
+<p align="center">
+  <img src="./figures/DeepseekLightningIndexer_0.png" width="60%" alt="示例图片">
+  <center>LightningIndexerSwimlane</center>
+</p>
+
+- 该泳道图的横轴表示时间，纵轴由一条条的泳道构成，一条泳道表示一个 AI 核。每条泳道上，随时间排布了对应 AI 核上执行的任务。
+- 每个任务上标记了一个标签，该标签是开发者写在源码中的语义标签 (Semantic Label)，用来辅助开发者理解当前硬件在执行的任务对应到哪一段前端代码。
+- 选中一个任务时，可以显示其前后依赖，用来观察任务的执行顺序、依赖间隔等是否合理。
+- 在泳道图上，可以看到不同颜色（即前端开发者写的不同代码）在同一时间不同计算核并行执行。传统的 SPMD 的调度要求同一时刻执行相同程序，而 MPMD 的运行时会根据实际运行时解依赖情况来调度任务执行，当一个任务解依赖完成后，就可以和在不同 AI 核上的任务异步并行执行。
+
+#### 泳道图分析
+
+当开发者写完 PyPTO 的代码，获取第一版的开箱性能后，需要根据泳道图分析可能的优化手段。上述泳道图展示的是在典型 Shape（4 Batch， KV-Cache 64K 长度）下的执行情况，直觉上能看到几个可以优化的“异常点”：
+1. MatMul 的 Cube 任务前序无依赖，为什么没有在第一时间执行？
+2. 主体的 Cube 和 Vector 任务都有三列，但是第三列只有部分核在工作，没有很好的对齐尾部。
+3. 最后的 TopK 似乎有严重的拖尾。
+
+接下来，PyPTO 的开发者可以针对上述问题进行分析。
+- 通过对异常点 1 的分析，发现框架在处理数据搬运类 Operation 的时候，对不需要数据搬运的场景优化能力缺失。
+- 通过对异常点 2 的分析，发现由于是 4 Batch 64K 的场景，Page Attention 中给定的 Block Size 为 128，那么 MatMul 切分出了 `4*64*1024/128=2048` 个任务，程序中通过配置调整任务 L1 复用为 32，即最后有 `2048/32=64` 个任务，无法平均分配到各个核上（当前硬件共有 24 个 Cube 核）。
+- 同样由于是 4 Batch 的场景，且最终的 TopK 任务是单核的归并，所以在 Vector 核上有拖尾。我们可以尝试优化最后的排序、归并任务来减小拖尾。
+
+#### 改进措施及结果
+
+- 针对异常点 1 ，通过修改相应的 Pass ，补齐泛化能力，从而提升性能 (10%) 。与传统黑盒的调优框架不同， PyPTO 通过可视化的集成开发环境辅助开发者发现算子甚至框架的问题，开发者可以选择本地修复或者向开源社区反馈。
+- 针对异常点 2 ，开发者可以选择通过调整 L1 复用来达到特定 Shape 性能和动态 Shape 泛化性能的平衡。只是在本例中，L1 复用设置为 32 可以达到较好的泛化性。
+  ```cpp
+  config::SetPassOption(L1_REUSE, 32);
+  ```
+- 在对异常点 2 分析的过程中，发现 MatMul 的输出粒度为 128，进而发现 Tile Shape 同样设置为 128，这对硬件计算并不是最高效的，因此选择调整 Tile Shape，让 MatMul 把数据输出到连续内存后再进行后续大颗粒度的 Vector 运算，提升性能 (17%) 。
+  ```cpp
+  TileShape::Current().SetVecTile({64, 256});
+  ```
+
+在经过上述优化后，得到新版的泳道图如下，可以看到其性能有明显的优化 (27%) 。
+
+<p align="center">
+  <img src="./figures/DeepseekLightningIndexer_1.png" width="60%" alt="示例图片">
+  <center>LightningIndexerSwimlaneNew</center>
+</p>
+
+#### 下一步计划
+
+经过上述优化，泳道图已经比较密集。但是图中仍然有一些可优化的部分：
+
+* MatMul 的子图太大会导致后续 Vector 任务延迟开始，第一列 Cube 任务下方仍然有大量的空白时间。通过对原始计算逻辑的分析，得知这一部分可以并行，因此后续可以考虑通过控制复用程度对此进行优化。
+* 最后的 TopK 是通过排序归并得出的结果，可以考虑将排序部分放入前面 Vector 运算，最后只做归并，从而减小拖尾时间。

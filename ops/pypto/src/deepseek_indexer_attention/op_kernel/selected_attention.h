@@ -16,7 +16,6 @@ the software repository for the full text of the License.
 #include "tilefwk/tilefwk_op.h"
 #include "tilefwk/tilefwk.h"
 #include "dynamic_nsa_common.h"
-#include "tilefwk/config_manager.h"
 
 namespace npu::tile_fwk {
 

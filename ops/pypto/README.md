@@ -1,5 +1,5 @@
 ## 概述
-此项目是基于昇腾硬件Atlas A3的融合算子库，当前项目中包括[DeepseekIndexerAttention](./docs/deepseek_indexer_attention.md) 和[LightningIndexer](./docs/lightning_indexer.md)两个算子。
+此项目是基于昇腾硬件Atlas A3的融合算子库，当前项目中包括[DeepseekIndexerAttention](./docs/deepseek_indexer_attention.md) 、[LightningIndexer](./docs/lightning_indexer.md)和[LightningIndexerProlog](./docs/lightning_indexer_prolog.md)三个算子。
 
 ## 目录结构
 
@@ -26,14 +26,24 @@
 │    │   │      ├── op_kernel                                           # op_kernel代码目录
 │    │   │      │     ├── lightning_indexer_topk.cpp                    # LightningIndexer算子kernel源码
 │    │   │      │     ├── lightning_indexer_impl.cpp                    # LightningIndexer算子ut测试用例
+│    │   ├── lightning_indexer_prolog_pto                               # lightning indexer prolog算子代码
+│    │   │      ├── op_host                                             # ophost目录
+│    │   │      │     ├── lightning_indexer_prolog_def.cpp              # LightningIndexerProlog算子原型注册代码
+│    │   │      │     ├── lightning_indexer_prolog_proto.cpp            # LightningIndexerProlog算子InferShape、InferDataType代码
+│    │   │      │     ├── lightning_indexer_prolog_tiling.cpp           # LightningIndexerProlog tiling代码
+│    │   │      ├── op_kernel                                           # op_kernel代码目录
+│    │   │      │     ├── quant_lightning_indexer_prolog.cpp            # LightningIndexerProlog算子kernel源码
+│    │   │      │     ├── quant_lightning_indexer_prolog_impl.cpp       # LightningIndexerProlog算子ut测试用例
 ├── torch_ops_extension                                                 # 自定义算子注册代码目录
 │    │   ├── custom_ops                                                 # custom_ops目录
 │    │   │      ├── converter                                           # 自定义算子包python侧converter代码目录
 │    │   │      │     ├── npu_lightning_indexer_pto.py                  # LightningIndexer算子converter注册
 │    │   │      │     ├── npu_sparse_attention_pto.py                   # DeepseekIndexerAttention算子converter注册
+│    │   │      │     ├── npu_lightning_indexer_prolog_pto.py           # LightningIndexerProlog算子converter注册
 │    │   │      ├── csrc                                                # 自定义算子适配层c++代码目录
 │    │   │      │     ├── npu_lightning_indexer_pto.cpp                 # LightningIndexer算子适配代码以及实现注册
 │    │   │      │     ├── npu_sparse_attention_pto.cpp                  # DeepseekIndexerAttention算子适配代码以及实现注册
+│    │   │      │     ├── npu_lightning_indexer_prolog_pto.cpp          # LightningIndexerProlog算子适配代码以及实现注册
 
 ```
 
@@ -137,6 +147,7 @@ bash ./build_and_install.sh
 cd examples
 python3 test_deepseek_indexer_attention.py
 python3 test_lightning_indexer_pto.py 
+python3 test_lightning_indexer_prolog.py
 ```
 
 ## DeepSeek-V3.2-Exp 整网集成样例执行

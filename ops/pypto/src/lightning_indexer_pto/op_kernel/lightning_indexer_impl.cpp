@@ -38,11 +38,13 @@ struct LightningIndexerPtoParams {
  
 void DynamicLightningIndexerPto(uint64_t configKey) {
     (void)configKey;
-    config::SetHostConfig(KEY_ONLY_CODEGEN, true);
-    config::SetCodeGenConfig(KEY_SUPPORT_DYNAMIC_UNALIGNED, true);
-    config::SetCodeGenConfig(KEY_CODEGEN_EXPRESSION_FUSION, true);
-    config::SetHostConfig("workspace_recycle_period", 128);
-    config::SetHostConfig("estimated_stitching_count", 128);
+    config::SetHostOption(ONLY_CODEGEN, true);
+    config::SetCodeGenOption(SUPPORT_DYNAMIC_UNALIGNED, true);
+    config::SetCodeGenOption(CODEGEN_EXPRESSION_FUSION, true);
+    config::SetRuntimeOption(MACHINE_SCHED_MODE, static_cast<uint8_t>(MachineScheduleConfig::L2CACHE_AFFINITY_SCH) |
+                                                 static_cast<uint8_t>(MachineScheduleConfig::MULTI_CORE_FAIR_SCH));
+    config::SetRuntimeOption<int>(WORKSPACE_RECYCLE_PERIOD, 128);
+    config::SetRuntimeOption<int>(ESTIMATED_STITCH_TASK_MAX_LOOP_NUM, 128);
 
     LightningIndexerPtoParams params;
 
@@ -50,8 +52,8 @@ void DynamicLightningIndexerPto(uint64_t configKey) {
     indexerConfig.weightTile = {64, 128};
     indexerConfig.c1Tile = {64, 64, 128, 128, 128, 128}; // (m, M), (k, K), (n, N)
     indexerConfig.v1Tile = {64, 128};
-    indexerConfig.topkTile = {1, 2048};
-    indexerConfig.addsTile = {1, 1, 1, 2048};
+    indexerConfig.topkTile = {1, 4096};
+    indexerConfig.addsTile = {1, 1, 1, 4096};
 
     std::vector<int64_t> queryShape = {params.b, params.s1, params.indexNHeads, params.indexHeadDim};
     std::vector<int64_t> keyShape = {params.blockNum, params.blockSize, params.n2, params.indexHeadDim};
@@ -67,8 +69,7 @@ void DynamicLightningIndexerPto(uint64_t configKey) {
     Tensor selectedIndices(DT_INT32,
         {GetInputShape(query, 0), GetInputShape(query, 1), params.n2, params.selectedCount}, "selectedIndices");
  
-    FunctionConfig funConfig;
-    FUNCTION("LightningIndexer", funConfig, {query, key, weights, actualSeqLengthsKey, blockTable}, {selectedIndices}) {
+    FUNCTION("LightningIndexer", {query, key, weights, actualSeqLengthsKey, blockTable}, {selectedIndices}) {
         LightningIndexerTopk(
             query, key, weights, actualSeqLengthsKey, blockTable, selectedIndices, params.selectedCount, indexerConfig);
     }

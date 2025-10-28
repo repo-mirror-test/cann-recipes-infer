@@ -54,6 +54,7 @@ bash run.sh
 │   │   ├── add_custom_autograd.cpp               # 自定义add算子适配代码以及实现注册
 │   │   ├── npu_lightning_indexer_pto.cpp         # 自定义算子lightning indexer适配代码以及实现注册
 │   │   ├── npu_sparse_attention_pto.cpp          # 自定义算子sparse attention适配代码以及实现注册
+│   │   ├── npu_lightning_indexer_prolog_pto.cpp  # 自定义算子lightning indexer prolog适配代码以及实现注册
 │   │   ├── ops_def_registration.cpp              # 自定义算子新增定义
 │   │   ├── ops_common.cpp                        # 自定义算子调用和下发框架实现
 │   │   ├── ops_common.h                          # 自定义算子调用和下发框架公共接口定义
@@ -63,6 +64,7 @@ bash run.sh
 │   │   ├── add_custom.py                         # 自定义add算子的converter注册
 │   │   ├── npu_lightning_indexer_pto.py          # 自定义lightning indexer算子的converter注册
 │   │   ├── npu_sparse_attention_pto.py           # 自定义sparse attention算子的converter注册
+│   │   ├── npu_lightning_indexer_prolog_pto.py   # 自定义lightning indexer prolog算子的converter注册
 │   ├──setup.py                                   # wheel包编译文件
 │   ├──README.md                                  #当前自定义算子仓库的使用指导
 │   ├── build_and_install.sh                      # 自定义算子wheel包编译与安装脚本

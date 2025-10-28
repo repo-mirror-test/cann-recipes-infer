@@ -13,6 +13,8 @@ the software repository for the full text of the License.
 #include "register/op_impl_registry.h"
 #include "register/op_ct_impl_registry.h"
 #include "nlohmann/json.hpp"
+#define RED "\033[31m"
+#define RESET "\033[0m"
 
 using namespace ge;
 using Json = nlohmann::json;
@@ -26,19 +28,19 @@ constexpr uint32_t ATTEN_RES_OUTPUT_INDEX = 0;
 ge::graphStatus InferShapeSparseAttentionPto(gert::InferShapeContext *context) {
     const gert::Shape *tokenXShape = context->GetInputShape(TOKEN_X_INPUT_INDEX);
     if (tokenXShape == nullptr) {
-        printf("Failed to get SparseAttentionPto tokenXShape.\n");
+        printf("%sError:%s Failed to get SparseAttentionPto tokenXShape.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
     const gert::Shape *weightUkShape = context->GetInputShape(WEIGHT_UK_INPUT_INDEX);
     if (weightUkShape == nullptr) {
-        printf("Failed to get SparseAttentionPto weightUkShape.\n");
+        printf("%sError:%s Failed to get SparseAttentionPto weightUkShape.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     // output: (B, N2, S, k)
     gert::Shape *outputShape = context->GetOutputShape(ATTEN_RES_OUTPUT_INDEX);
     if (outputShape == nullptr) {
-        printf("Failed to get SparseAttentionPto outputShape.\n");
+        printf("%sError:%s Failed to get SparseAttentionPto outputShape.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 

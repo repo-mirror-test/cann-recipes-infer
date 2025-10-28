@@ -14,7 +14,6 @@ the software repository for the full text of the License.
 
 #include <cmath>
 #include "tilefwk/tilefwk.h"
-#include "tilefwk/config_manager.h"
 #include "tilefwk/tilefwk_op.h"
 
 namespace npu::tile_fwk {
@@ -90,6 +89,15 @@ const std::string NBUFFER_NUM = "nbuffer_num";
 const std::string L1_REUSE_NUM = "l1_reuse_num";
 const std::string CUBE_NBUFFER_NUM = "cube_nbuffer_num";
 const std::string DB_TYPE = "db_type";
+
+constexpr const char *ONLY_CODEGEN = "only_codegen";
+constexpr const char *SUPPORT_DYNAMIC_UNALIGNED = "support_dynamic_unaligned";
+constexpr const char *CODEGEN_EXPRESSION_FUSION = "codegen_expression_fusion";
+
+//runtime
+constexpr const char *MACHINE_SCHED_MODE = "machine_sched_mode";
+constexpr const char *WORKSPACE_RECYCLE_PERIOD = "workspace_recycle_period";
+constexpr const char *ESTIMATED_STITCH_TASK_MAX_LOOP_NUM = "estimated_stitch_task_max_loop_num";
 
 struct MlaTileConfig {
     int tileB = 8;

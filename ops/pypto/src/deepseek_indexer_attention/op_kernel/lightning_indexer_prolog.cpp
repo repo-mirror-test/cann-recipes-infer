@@ -57,7 +57,7 @@ Tensor RotateHalfValidShape(const Tensor &input) {
     std::vector<SymbolicScalar> offset2(shapeSize, 0);
     offset2[shapeSize - 1] = shape[shapeSize - 1];
 
-    std::vector<SymbolicScalar> validShape = GetDynValidShape(input);
+    std::vector<SymbolicScalar> validShape = GetInputShape(input);
     validShape[shapeSize - 1] = validShape[shapeSize - 1] / NUM2;
 
     // x1 = [..., : x.shape[-1] // 2]
@@ -85,7 +85,7 @@ Tensor Rope3D(const Tensor &x, const Tensor &cos, const Tensor &sin, const RopeT
     castCos = Reshape(castCos, {x.GetShape()[NUM_VALUE_0], 1, x.GetShape()[NUM_VALUE_2]});
     castSin = Reshape(castSin, {x.GetShape()[NUM_VALUE_0], 1, x.GetShape()[NUM_VALUE_2]});
 
-    std::vector<SymbolicScalar> xValidShape = GetDynValidShape(x);
+    std::vector<SymbolicScalar> xValidShape = GetInputShape(x);
     auto xView = Reshape(castX,
         {x.GetShape()[NUM_VALUE_0], x.GetShape()[NUM_VALUE_1], x.GetShape()[NUM_VALUE_2] / NUM_VALUE_2, NUM_VALUE_2},
         {xValidShape[NUM_VALUE_0], xValidShape[NUM_VALUE_1], xValidShape[NUM_VALUE_2] / NUM_VALUE_2, NUM_VALUE_2});
@@ -167,14 +167,14 @@ void LightningIndexerPrologCompute(
                 auto c1Tile = params.indexerTileConfigs.c1TileShape;
                 auto v1Tile = params.indexerTileConfigs.v1TileShape;
 
-                ConfigManager::Instance().SetSemanticLabel("QMatmul");
+                config::SetSemanticLabel("QMatmul");
                 TileShape::Current().SetCubeTile({c1Tile[NUM_VALUE_0], c1Tile[NUM_VALUE_1]},
                     {c1Tile[NUM_VALUE_2], c1Tile[NUM_VALUE_3]}, {c1Tile[NUM_VALUE_4], c1Tile[NUM_VALUE_5]}, true);
                 auto qrBlock = View(qr2D, {tileBS, qLoraRank}, {actBS, qLoraRank}, {bsIdx, 0});
                 // {tileBS, qLoraRank} * {qLoraRank, headNum * headDim} = {tileBS, headNum * headDim}
                 auto q32 = Matrix::Matmul<false, false>(DT_FP32, qrBlock, inputs.qW);
 
-                ConfigManager::Instance().SetSemanticLabel("QCast");
+                config::SetSemanticLabel("QCast");
                 TileShape::Current().SetVecTile(std::min(tileBS, 4), 32, v1Tile[NUM_VALUE_1]);
                 auto q = Cast(Reshape(q32, {tileBS, headNum, headDim}), qrBlock.GetDataType());
                 Tensor qRope = View(q, {tileBS, headNum, ropeHeadDim}, {actBS, headNum, ropeHeadDim}, {0, 0, 0});
@@ -182,7 +182,7 @@ void LightningIndexerPrologCompute(
                     {actBS, headNum, headDim - ropeHeadDim}, {0, 0, ropeHeadDim});
                 qNope = Cast(Cast(qNope, DT_FP32), qNope.GetDataType());
 
-                ConfigManager::Instance().SetSemanticLabel("KMatmul");
+                config::SetSemanticLabel("KMatmul");
                 auto c2Tile = params.indexerTileConfigs.c2TileShape;
                 TileShape::Current().SetCubeTile({c2Tile[NUM_VALUE_0], c2Tile[NUM_VALUE_1]},
                     {c2Tile[NUM_VALUE_2], c2Tile[NUM_VALUE_3]}, {c2Tile[NUM_VALUE_4], c2Tile[NUM_VALUE_5]}, true);
@@ -202,15 +202,15 @@ void LightningIndexerPrologCompute(
                 TileShape::Current().SetVecTile(v1Tile[NUM_VALUE_0], v1Tile[NUM_VALUE_1], v1Tile[NUM_VALUE_2]);
                 cos2D = View(cos2D, {tileBS, ropeHeadDim}, {actBS, ropeHeadDim}, {bsIdx, 0});
                 sin2D = View(sin2D, {tileBS, ropeHeadDim}, {actBS, ropeHeadDim}, {bsIdx, 0});
-                ConfigManager::Instance().SetSemanticLabel("QRope");
+                config::SetSemanticLabel("QRope");
                 // qRope{tileBS * headNum, ropeHeadDim}  cos{tileBS, ropeHeadDim}   sin{tileBS, ropeHeadDim}
-                ConfigManager::Instance().SetSemanticLabel("KRope");
+                config::SetSemanticLabel("KRope");
                 auto qRoped = Rope3D(qRope, cos2D, sin2D, params.ropeTileConfigs); // {tileBS, headNum, ropeHeadDim}
                 TileShape::Current().SetVecTile(v1Tile[NUM_VALUE_0], v1Tile[NUM_VALUE_1]);
                 // kRope{tileBS, ropeHeadDim}  cos{tileBS, ropeHeadDim}   sin{tileBS, ropeHeadDim}
                 auto kRoped = Rope(kRope, cos2D, sin2D, params.ropeTileConfigs); // {tileBS, ropeHeadDim}
 
-                ConfigManager::Instance().SetSemanticLabel("KAssemble");
+                config::SetSemanticLabel("KAssemble");
                 TileShape::Current().SetVecTile(tileBS, 128, 128, 128);
                 Assemble(qRoped, {bsIdx, 0, 0}, outputs.query);
                 Assemble(qNope, {bsIdx, 0, ropeHeadDim}, outputs.query);
@@ -231,9 +231,7 @@ void LightningIndexerPrologCompute(
 
 void LightningIndexerProlog(
     const IndexerPrologInput &inputs, IndexerPrologOutput &outputs, const IndexerShapeParams &params) {
-    config::SetCodeGenConfig("SUPPORT_DYNAMIC_UNALIGNED", true);
-    FunctionConfig funConfig;
-    FUNCTION("LightningIndexerProlog", funConfig,
+    FUNCTION("LightningIndexerProlog",
         {
             inputs.x, inputs.qr, inputs.qW, inputs.kW, inputs.projW, inputs.lnW, inputs.lnBias, inputs.cos, inputs.sin,
             inputs.kCache, inputs.kCacheIndex, inputs.blockTable

@@ -12,7 +12,6 @@ the software repository for the full text of the License.
 #include "deepseek_indexer_attention.h"
 #include "lightning_indexer_topk.h"
 #include "tilefwk/tensor.h"
-#include "tilefwk/config_manager.h"
 #include "dynamic_nsa_common.h"
 
 namespace npu::tile_fwk {
@@ -43,7 +42,6 @@ void DeepseekIndexerAttentionPto(const Tensor &x, const Tensor &wDq, const Tenso
     const Tensor &indexKCache, Tensor &attentionOut, Tensor &gatherResTmp, Tensor &topkInputTmp,
     Tensor &indexerTopkResTmp, Tensor &rowSumOutTmp, Tensor &rmsResOutTmp, Tensor &queryOutTmp, Tensor &weightOutTmp,
     Tensor &qNopeOutTmp, Tensor &qRopeOutTmp, const NSASimpleParams &params) {
-    FunctionConfig funConfig;
     auto dType = x.GetDataType();
     int blockSize = params.blockSize;
     int n1 = params.n1;
@@ -58,7 +56,6 @@ void DeepseekIndexerAttentionPto(const Tensor &x, const Tensor &wDq, const Tenso
     Tensor kRope2D(dType, {GetInputShape(krCache, 0) * blockSize * n2, dr}, "kRope2D");
     FUNCTION(
         "main",
-        funConfig,
         {
             x, wDq, wUqQr, wUk, wDkvKr, gammaCq, gammaCkv, sin, cos, cacheIndex, kvCache, krCache, blockTable, actSeqs,
             qW, kW, projW, lnW, lnBias, indexKCache,
@@ -106,8 +103,8 @@ void DeepseekIndexerAttentionPto(const Tensor &x, const Tensor &wDq, const Tenso
             ReshapeInplace(weightOut, weightOut4D);
         }
 
-        config::SetCodeGenConfig(KEY_SUPPORT_DYNAMIC_UNALIGNED,true);
-        config::SetCodeGenConfig(KEY_CODEGEN_EXPRESSION_FUSION, true);
+        config::SetCodeGenOption(SUPPORT_DYNAMIC_UNALIGNED,true);
+        config::SetCodeGenOption(CODEGEN_EXPRESSION_FUSION, true);
         std::set<int> indexerUnrollList = {64, 32, 16, 8, 4, 1};
 
 #if DEBUG_DUMP_TMP_IN_OUT == 1

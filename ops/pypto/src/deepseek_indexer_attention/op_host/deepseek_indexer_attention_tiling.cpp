@@ -11,6 +11,8 @@ the software repository for the full text of the License.
 
 #include "register/op_impl_registry.h"
 #include "platform/platform_infos_def.h"
+#define RED "\033[31m"
+#define RESET "\033[0m"
 
 namespace tiling {
 constexpr uint64_t SA_ENABLE_ACT_QUERY_TYPE_OFFSET = uint64_t(100000000UL);
@@ -37,6 +39,7 @@ constexpr uint32_t NUM_64 = 64;
 constexpr uint32_t NUM_1536 = 1536;
 constexpr uint32_t NUM_128K = 128 * 1024;
 constexpr uint32_t NUM_4 = 4;
+constexpr uint32_t NUM_1 = 1;
 constexpr uint32_t NUM_1024 = 1024;
 constexpr uint32_t SELECT_COUNT_VALUE = 2048;
 struct SparseAttentionPtoCompileInfo {
@@ -51,49 +54,49 @@ inline T *GetCompileInfoPtr(gert::TilingParseContext *context) {
 ge::graphStatus SparseAttentionPtoCheck(gert::TilingContext *context) {
     auto tokenXShape = context->GetDynamicInputShape(TOKEN_X_INPUT_INDEX, TOKEN_X_INPUT_INDEX);
     if (tokenXShape == nullptr) {
-        printf("Sparse attention pto must support token x tensor.\n");
+        printf("%sError:%s Sparse attention pto must support token x tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
     
     auto mlaRopeCosShape = context->GetDynamicInputShape(TOKEN_X_INPUT_INDEX, MLA_ROPE_COS_INDEX);
     if (mlaRopeCosShape == nullptr) {
-        printf("Sparse attention pto must support mlaRopeCos tensor.\n");
+        printf("%sError:%s Sparse attention pto must support mlaRopeCos tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     auto mlaRopeSinShape = context->GetDynamicInputShape(TOKEN_X_INPUT_INDEX, MLA_ROPE_SIN_INDEX);
     if (mlaRopeSinShape == nullptr) {
-        printf("Sparse attention pto must support mlaRopeSin tensor.\n");
+        printf("%sError:%s Sparse attention pto must support mlaRopeSin tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     auto actSeqKeyShape = context->GetDynamicInputShape(TOKEN_X_INPUT_INDEX, ACT_SEQ_KEY_INDEX);
     if (actSeqKeyShape == nullptr) {
-        printf("Sparse attention pto must support actSeqKey tensor.\n");
+        printf("%sError:%s Sparse attention pto must support actSeqKey tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     auto blockTableShape = context->GetDynamicInputShape(TOKEN_X_INPUT_INDEX, BLOCK_TABLE_INDEX);
     if (blockTableShape == nullptr) {
-        printf("Sparse attention pto must support block table tensor.\n");
+        printf("%sError:%s Sparse attention pto must support block table tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     auto cacheIndexShape = context->GetDynamicInputShape(TOKEN_X_INPUT_INDEX, CACHE_TENSOR_INDEX);
     if (cacheIndexShape == nullptr) {
-        printf("Sparse attention pto must support cache index tensor.\n");
+        printf("%sError:%s Sparse attention pto must support cache index tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     auto kvCaheShape = context->GetDynamicInputShape(TOKEN_X_INPUT_INDEX, KV_CACHE_INDEX);
     if (kvCaheShape == nullptr) {
-        printf("Sparse attention pto must support kv cache tensor.\n");
+        printf("%sError:%s Sparse attention pto must support kv cache tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
     
     auto krCaheShape = context->GetDynamicInputShape(TOKEN_X_INPUT_INDEX, KR_CACHE_INDEX);
     if (krCaheShape == nullptr) {
-        printf("Sparse attention pto must support kr cache tensor.\n");
+        printf("%sError:%s Sparse attention pto must support kr cache tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
     
@@ -101,7 +104,7 @@ ge::graphStatus SparseAttentionPtoCheck(gert::TilingContext *context) {
         mlaRopeSinShape->GetStorageShape().GetDimNum() != 3 || actSeqKeyShape->GetStorageShape().GetDimNum() != 1 ||
         cacheIndexShape->GetStorageShape().GetDimNum() != 2 || kvCaheShape->GetStorageShape().GetDimNum() != 4 ||
         krCaheShape->GetStorageShape().GetDimNum() != 4) {
-        printf("Sparse attention pto get tensor with invalid dim num.\n");
+        printf("%sError:%s Sparse attention pto get tensor with invalid dim num.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
@@ -111,7 +114,7 @@ ge::graphStatus SparseAttentionPtoCheck(gert::TilingContext *context) {
         tokenXShape->GetStorageShape().GetDim(AXIS_0) != actSeqKeyShape->GetStorageShape().GetDim(AXIS_0) ||
         tokenXShape->GetStorageShape().GetDim(AXIS_0) != cacheIndexShape->GetStorageShape().GetDim(AXIS_0) ||
         tokenXShape->GetStorageShape().GetDim(AXIS_0) != 4) {
-        printf("Sparse attention pto get invalid batch value.\n");
+        printf("%sError:%s Sparse attention pto get invalid batch value, please set the batch value to 4.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
@@ -119,14 +122,14 @@ ge::graphStatus SparseAttentionPtoCheck(gert::TilingContext *context) {
         tokenXShape->GetStorageShape().GetDim(AXIS_1) != mlaRopeSinShape->GetStorageShape().GetDim(AXIS_1) ||
         tokenXShape->GetStorageShape().GetDim(AXIS_1) != cacheIndexShape->GetStorageShape().GetDim(AXIS_1) ||
         (tokenXShape->GetStorageShape().GetDim(AXIS_1) != 1 && tokenXShape->GetStorageShape().GetDim(AXIS_1) != 2)) {
-        printf("Sparse attention pto get invalid s1 value.\n");
+        printf("%sError:%s Sparse attention pto get invalid s1 value, please set the s1 value between 1 and 2.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     if (kvCaheShape->GetStorageShape().GetDim(AXIS_0) != krCaheShape->GetStorageShape().GetDim(AXIS_0) ||
         kvCaheShape->GetStorageShape().GetDim(AXIS_0) > tokenXShape->GetStorageShape().GetDim(AXIS_0) * NUM_1024 ||
         blockTableShape->GetStorageShape().GetDim(AXIS_1) > NUM_1024) {
-        printf("Sparse attention pto get invalid block num value.\n");
+        printf("%sError:%s Sparse attention pto get invalid block num value.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
  
@@ -134,30 +137,30 @@ ge::graphStatus SparseAttentionPtoCheck(gert::TilingContext *context) {
 }
 ge::graphStatus TilingSparseAttentionPto(gert::TilingContext *context) {
     if (context == nullptr) {
-        printf("Failed to get SparseAttentionPto tiling context.\n");
+        printf("%sError:%s Failed to get SparseAttentionPto tiling context.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     if (context->GetNodeName() == nullptr) {
-        printf("Failed to get SparseAttentionPto tiling context node name.\n");
+        printf("%sError:%s Failed to get SparseAttentionPto tiling context node name.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     if (SparseAttentionPtoCheck(context) != ge::GRAPH_SUCCESS) {
-        printf("SparseAttentionPto get invalid tensor.\n");
+        printf("%sError:%s SparseAttentionPto get invalid tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
     
     auto tokenXDesc = context->GetDynamicInputDesc(TOKEN_X_INPUT_INDEX, TOKEN_X_INPUT_INDEX);
     auto tokenXShape = context->GetDynamicInputShape(TOKEN_X_INPUT_INDEX, TOKEN_X_INPUT_INDEX);
     if (tokenXDesc == nullptr || tokenXShape == nullptr || tokenXShape->GetStorageShape().GetDimNum() != 3) {
-        printf("Input tensor tokenX is invalid.\n");
+        printf("%sError:%s Input tensor tokenX is invalid.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     auto actualSeqQueryTableDesc = context->GetDynamicInputDesc(TOKEN_X_INPUT_INDEX, ACT_SEQ_QUERY_INPUT_INDEX);
     if (actualSeqQueryTableDesc == nullptr) {
-        printf("SparseAttentionPto do not support actualSeqQuery.\n");
+        printf("SparseAttentionPto do not get actualSeqQuery.\n");
     }
 
     uint64_t tilingKey = SA_ENABLE_ACT_QUERY_TYPE_OFFSET;
@@ -175,8 +178,9 @@ ge::graphStatus TilingSparseAttentionPto(gert::TilingContext *context) {
     uint64_t rmsResBuffer = b * s * NUM_1536 * dtypeSize;
     uint64_t queryOutBuffer = b * s * NUM_64 * NUM_128 * dtypeSize;
     uint64_t weightOutBuffer = b * s * NUM_64 * dtypeSize;
-    uint64_t localSumBuffer = b * s * NUM_128K * 4;
-    auto totalBuffer = queryNopeOutBuffer + queryRopeOutBuffer + rmsResBuffer + queryOutBuffer + weightOutBuffer + localSumBuffer;
+    uint64_t gatherResBuffer = b * s * SELECT_COUNT_VALUE * (NUM_512 + NUM_64) * dtypeSize;
+    uint64_t indexerTopkResBuffer = b * s * NUM_1 * SELECT_COUNT_VALUE * 4;
+    auto totalBuffer = queryNopeOutBuffer + queryRopeOutBuffer + rmsResBuffer + queryOutBuffer + weightOutBuffer + gatherResBuffer + indexerTopkResBuffer;
     auto workspaces = context->GetWorkspaceSizes(1);
     workspaces[0] = totalBuffer;
     printf("SparseAttentionPto parse tiling context sccuess, core num is %d, tilingKey is %ld, totalBuffer is %ld.\n",

@@ -51,9 +51,9 @@ void SelectedAttentionCompute(const Tensor &qNope, const Tensor &qRope, const Te
     SymbolicScalar gLoopSym = group / gTile;
 
     SymbolicScalar s2Sym = s1S2Sym / s1Sym; // s2
-    config::SetCodeGenConfig("SUPPORT_DYNAMIC_UNALIGNED", true);
+	config::SetCodeGenOption(SUPPORT_DYNAMIC_UNALIGNED,true);
     LOOP("LOOP_L0_b_SA", FunctionType::DYNAMIC_LOOP, bIdx, LoopRange(0, batchSizeSym, 1), {}, true) {
-        SymbolicScalar curKvSlcSeq = GetInputData(kvSlcActSeqs, {bIdx});
+        SymbolicScalar curKvSlcSeq = GetTensorData(kvSlcActSeqs, {bIdx});
         LOOP("LOOP_L1_s1_SA", FunctionType::DYNAMIC_LOOP, s1Idx, LoopRange(0, s1Sym, 1)) {
             SymbolicScalar curSeq = std::min(
                 std::max(curKvSlcSeq - s1Sym + 1 + s1Idx, 0), topk); // for MTP s1!= 1 casual
@@ -75,7 +75,7 @@ void SelectedAttentionCompute(const Tensor &qNope, const Tensor &qRope, const Te
                         int curS2Tile = s2Tile;
                         SymbolicScalar curKvOffset = bIdx * s1S2Sym + s1Idx * s2Sym + s2Idx * curS2Tile;
 
-                        ConfigManager::Instance().SetSemanticLabel("Sa");
+                        config::SetSemanticLabel("Sa");
                         auto qn = View(qNope, {curGTile, dN}, {curGTile, dN}, {curOffset, 0});
                         auto qr = View(qRope, {curGTile, dR}, {curGTile, dR}, {curOffset, 0});
                         Tensor qi(dtype, {curGTile, dN + dR}, "qi");
@@ -91,12 +91,12 @@ void SelectedAttentionCompute(const Tensor &qNope, const Tensor &qRope, const Te
                         // C1
                         TileShape::Current().SetCubeTile(
                             {c1Tile[0], c1Tile[1]}, {c1Tile[2], c1Tile[3]}, {c1Tile[4], c1Tile[5]}, false);
-                        ConfigManager::Instance().SetSemanticLabel("Sa_QkMM");
+                        config::SetSemanticLabel("Sa_QkMM");
                         TileShape::Current().SetMatrixSize({qi.GetShape()[0], 0, kj.GetShape()[0]});
                         auto sij = Matrix::Matmul<false, true>(DataType::DT_FP32, qi, kj);
 
                         // V1
-                        ConfigManager::Instance().SetSemanticLabel("Sa_Qkvec1");
+                        config::SetSemanticLabel("Sa_Qkvec1");
                         TileShape::Current().SetVecTile(v1Tile[0], v1Tile[1]);
                         auto sijScale = MulS(sij, Element(sij.GetDataType(), softmaxScale));
                         auto tildaMij = RowMaxSingle(sijScale); // (curGTile, curS2Tile) -> (curGTile, 1)
@@ -110,14 +110,14 @@ void SelectedAttentionCompute(const Tensor &qNope, const Tensor &qRope, const Te
                             // C2
                             TileShape::Current().SetCubeTile(
                                 {c2Tile[0], c2Tile[1]}, {c2Tile[2], c2Tile[3]}, {c2Tile[4], c2Tile[5]}, false);
-                            ConfigManager::Instance().SetSemanticLabel("Sa_KvMm");
+                            config::SetSemanticLabel("Sa_KvMm");
                             TileShape::Current().SetMatrixSize(
                                 {tildaPijF16.GetShape()[0], tildaPijF16.GetShape()[1], vj.GetShape()[1]});
                             auto oiTmp = Matrix::Matmul<false, false>(DataType::DT_FP32, tildaPijF16, vj);
                             TileShape::Current().SetVecTile(v2Tile[0], v2Tile[1]);
                             IF(IsLoopEnd(s2Idx, bnPerBatch)) {
                                 // V2
-                                ConfigManager::Instance().SetSemanticLabel("Sa_KvVec2");
+                                config::SetSemanticLabel("Sa_KvVec2");
                                 oiUpdate = Div(oiTmp, tildaLij);
                                 TileShape::Current().SetVecTile(1, 1, v2Tile[0], v2Tile[1]);
                                 auto oiUpdate4Dim = Cast(Reshape(oiUpdate, {1, 1, curGTile, dN}), qNope.GetDataType());
@@ -128,7 +128,7 @@ void SelectedAttentionCompute(const Tensor &qNope, const Tensor &qRope, const Te
                             liUpdate = tildaLij;
                             miUpdate = tildaMij;
                         } ELSE {
-                            ConfigManager::Instance().SetSemanticLabel("Sa_UpdateVec2");
+                            config::SetSemanticLabel("Sa_UpdateVec2");
                             auto oi = oiUpdate;
                             auto li = liUpdate;
                             auto mi = miUpdate;
@@ -145,7 +145,7 @@ void SelectedAttentionCompute(const Tensor &qNope, const Tensor &qRope, const Te
                             auto q3 = Mul(oi, t2);
                             TileShape::Current().SetCubeTile(
                                 {c2Tile[0], c2Tile[1]}, {c2Tile[2], c2Tile[3]}, {c2Tile[4], c2Tile[5]}, false);
-                            ConfigManager::Instance().SetSemanticLabel("Sa_UpdateMM2");
+                            config::SetSemanticLabel("Sa_UpdateMM2");
                             TileShape::Current().SetMatrixSize(
                                 {tildaPijF16.GetShape()[0], tildaPijF16.GetShape()[1], vj.GetShape()[1]});
                             auto q1 = Matrix::Matmul<false, false>(DataType::DT_FP32, tildaPijF16, vj);
@@ -173,8 +173,7 @@ void SelectedAttentionCompute(const Tensor &qNope, const Tensor &qRope, const Te
 void SelectedAttention(const Tensor &qNope, const Tensor &qRope, const Tensor &kSlc, const Tensor &vSlc,
     const Tensor &kvSlcActSeqs, int nQ, int nKv, float softmaxScale, int topk, Tensor &attentionOut,
     SaTileShapeConfig tileConfig) {
-    FunctionConfig funConfig;
-    FUNCTION("SA_MAIN", funConfig, {qNope, qRope, kSlc, vSlc, kvSlcActSeqs}, {attentionOut}) {
+    FUNCTION("SA_MAIN", {qNope, qRope, kSlc, vSlc, kvSlcActSeqs}, {attentionOut}) {
         SelectedAttentionCompute(
             qNope, qRope, kSlc, vSlc, kvSlcActSeqs, nQ, nKv, softmaxScale, topk, attentionOut, tileConfig);
     }

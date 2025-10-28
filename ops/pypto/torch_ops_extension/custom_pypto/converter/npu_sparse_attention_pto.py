@@ -25,7 +25,6 @@ from torchair.ge import attr
 
 
 # 为自定义算子注册converter，用于torch.compile 场景成图
-
 # 注意： meta_outputs形参名为固定写法，若写错会影响ge节点的输出dtype与shape推导
 @register_fx_node_ge_converter(torch.ops.custom_pypto.npu_sparse_attention_pto.default)
 def convert_npu_sparse_attention_pto(
@@ -56,12 +55,6 @@ def convert_npu_sparse_attention_pto(
                                     Tensor sin, Tensor cos, Tensor cache_index, Tensor kv_cache, Tensor kr_cache, Tensor block_table,
                                     Tensor act_seqs, Tensor w_idx_qb, Tensor w_idx_k, Tensor w_idx_proj, Tensor in_gamma_k, Tensor in_beta_k, Tensor index_k_cache) -> Tensor'''
 
-    input_list = [
-        x, w_dq, w_uq_qr, w_uk, w_dkv_kr, gamma_cq, gamma_ckv,
-        sin, cos, cache_index, kv_cache, kr_cache, block_table,
-        act_seqs, w_idx_qb, w_idx_k, w_idx_proj, in_gamma_k, in_beta_k, index_k_cache
-    ]
-    
     return torchair.ge.custom_op(
         "SparseAttentionPto",
         inputs={

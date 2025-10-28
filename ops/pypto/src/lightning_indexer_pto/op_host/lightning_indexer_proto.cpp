@@ -16,6 +16,8 @@ the software repository for the full text of the License.
 
 using namespace ge;
 using Json = nlohmann::json;
+#define RED "\033[31m"
+#define RESET "\033[0m"
 
 namespace ops {
 // INPUT
@@ -28,16 +30,19 @@ constexpr uint32_t NDA_OUTPUT_INDEX = 0;
 ge::graphStatus InferShapeLightningIndexerPto(gert::InferShapeContext *context) {
     const gert::Shape *queryShape = context->GetInputShape(QUERY_INPUT_INDEX);
     if (queryShape == nullptr) {
+        printf("%sError:%s Lightning indexer pto must support query tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
     const gert::Shape *keyShape = context->GetInputShape(KEY_INPUT_INDEX);
     if (keyShape == nullptr) {
+        printf("%sError:%s Lightning indexer pto must support key tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
     // output: (B, N2, S, k)
     gert::Shape *outputShape = context->GetOutputShape(NDA_OUTPUT_INDEX);
     if (outputShape == nullptr) {
+        printf("%sError:%s Lightning indexer pto get null output tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 

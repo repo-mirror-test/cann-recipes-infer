@@ -70,7 +70,7 @@ main() {
     mkdir -p ${OUTPUT_PATH}
     build_ops || { echo "Tile fwk ops build failed."; exit 1; }
     echo "---------------Tile fwk ops build successfully----------------"
-    echo "---------------Begin to package nsa custom run opkg----------------"
+    echo "---------------Begin to package custom run ops pkg----------------"
     rm -rf ${BASEPATH}/run_pkg
     OPS_PKG_DIR=${BASEPATH}/run_pkg/packages/vendors/customize_ops/
     mkdir -p ${BASEPATH}/run_pkg/packages/vendors/customize_ops/
@@ -86,7 +86,8 @@ main() {
     bash ${MAKESELF_DIR}/makeself.sh --header ${MAKESELF_DIR}/makeself-header.sh \
         --help-header ./help.info --tar-format posix  --gzip --complevel 4 --nomd5 --sha256 \
         ./ customize_ops_${pkg_suffix}.run "version:1.0" ./install.sh
-    echo "---------------Finish to package nsa custom run opkg----------------"
+    rm -rf ${BUILD_PATH}/output
+    echo "--------------- Finish to package custom run ops pkg ----------------"
 }
 
 main "$@"

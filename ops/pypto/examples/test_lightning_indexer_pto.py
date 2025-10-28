@@ -23,13 +23,12 @@ torchair.logger.setLevel(logging.DEBUG)
 np.random.seed(0)
 
 
-
 class Model(torch.nn.Module):
     def __init__(self):
         super().__init__()
     def forward(self, query, key, weights, actual_seq_lengths_key, block_table, score_scale=1.0000, sparse_count=2048,
                 actual_seq_lengths_query=None, layout_query="BSND", layout_key="PA_BSND", sparse_mode=3):
-        inputs=[query, key, weights, actual_seq_lengths_key, block_table]
+
         topk_res = torch.ops.custom_pypto.npu_lightning_indexer_pto(
             query=query, key=key, weights=weights,
             actual_seq_lengths_query=actual_seq_lengths_query, actual_seq_lengths_key=actual_seq_lengths_key,
@@ -38,8 +37,9 @@ class Model(torch.nn.Module):
             layout_key=layout_key,
             sparse_count=sparse_count,
             sparse_mode=sparse_mode
-            )
+        )
         return topk_res
+
 
 def gen_block_table(b, block_size, max_kv, act_kv):
     logging.info("Entering into gen_block_table!")
@@ -67,6 +67,7 @@ def gen_block_table(b, block_size, max_kv, act_kv):
 
     return block_num, block_table
 
+
 def gen_cache_tensor(k_tensor, block_table, block_num, block_size, b):
     logging.info("Entering into gen_cache_tensor!")
     dtype = k_tensor.dtype
@@ -88,6 +89,7 @@ def gen_cache_tensor(k_tensor, block_table, block_num, block_size, b):
 
     k_cache = k_cache.reshape(block_num, block_size, n, d)
     return k_cache
+
 
 def gen_data_for_compute(params):
     b = params.get("b")
@@ -137,6 +139,7 @@ def gen_data_for_compute(params):
     ]
 
     return input_data_map
+
 
 def indexer_topk_compute(input_data_map, params):
     block_size = params.get("block_size")  # 128
@@ -213,6 +216,7 @@ def indexer_topk_compute(input_data_map, params):
                                    eff_seq], dtype=torch.int32)
 
     return topk_value, topk_res, tmp_out
+
 
 def build_npu_graph():
 
@@ -305,6 +309,7 @@ def build_npu_graph():
         print(f"\033[1;31m================ case lightning indexer topk precision failed ================\033[0m \n")
 
     return topk_res
+
 
 if __name__ == "__main__":
     res = build_npu_graph()

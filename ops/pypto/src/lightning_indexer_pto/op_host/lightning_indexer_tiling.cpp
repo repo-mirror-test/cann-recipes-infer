@@ -30,6 +30,8 @@ constexpr uint32_t AXIS_3 = 3;
 constexpr uint32_t BLOCK_TABLE_INPUT_INDEX = 4;
 constexpr uint64_t L1_SORT_LENGTH = 1024 * 16;
 constexpr uint64_t Lightning_Indexer_PTO_ConfigKey = uint64_t(100000000UL);
+#define RED "\033[31m"
+#define RESET "\033[0m"
 struct LightningIndexerPtoCompileInfo {
     uint32_t block_dim_num = 0;
 };
@@ -59,37 +61,37 @@ ge::graphStatus GetDataType(ge::DataType dataType, uint32_t &typeValue) {
 ge::graphStatus LightningIndexerPtoCheck(gert::TilingContext *context) {
     auto blockTableShape = context->GetDynamicInputShape(QUERY_INPUT_INDEX, BLOCK_TABLE_INPUT_INDEX);
     if (blockTableShape == nullptr) {
-        printf("Lightning indexer pto must support block table tensor.\n");
+        printf("%sError:%s Lightning indexer pto must support block table tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
     
     auto queryShape = context->GetDynamicInputShape(QUERY_INPUT_INDEX, QUERY_INPUT_INDEX);
     if (queryShape == nullptr) {
-        printf("Lightning indexer pto must support query tensor.\n");
+        printf("%sError:%s Lightning indexer pto must support query tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
  
     auto keyShape = context->GetDynamicInputShape(QUERY_INPUT_INDEX, KEY_INPUT_INDEX);
     if (keyShape == nullptr) {
-        printf("Lightning indexer pto must support key tensor.\n");
+        printf("%sError:%s Lightning indexer pto must support key tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
  
     auto weightsShape = context->GetDynamicInputShape(QUERY_INPUT_INDEX, WEIGHTS_INPUT_INDEX);
     if (weightsShape == nullptr) {
-        printf("Lightning indexer pto must support weights tensor.\n");
+        printf("%sError:%s Lightning indexer pto must support weights tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
- 
+
     auto actSeqShape = context->GetDynamicInputShape(QUERY_INPUT_INDEX, ACTSEQ_INPUT_INDEX);
     if (actSeqShape == nullptr) {
-        printf("Lightning indexer pto must support act seq tensor.\n");
+        printf("%sError:%s Lightning indexer pto must support act seq tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
     
     if (queryShape->GetStorageShape().GetDimNum() !=4 || keyShape->GetStorageShape().GetDimNum() != 4 ||
         blockTableShape->GetStorageShape().GetDimNum() != 2) {
-        printf("Lightning indexer pto get tensor with invalid dim num.\n");
+        printf("%sError:%s Lightning indexer pto get tensor with invalid dim num.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 
@@ -97,13 +99,13 @@ ge::graphStatus LightningIndexerPtoCheck(gert::TilingContext *context) {
         queryShape->GetStorageShape().GetDim(AXIS_0) != actSeqShape->GetStorageShape().GetDim(AXIS_0) ||
         queryShape->GetStorageShape().GetDim(AXIS_0) != blockTableShape->GetStorageShape().GetDim(AXIS_0) ||
         queryShape->GetStorageShape().GetDim(AXIS_0) > 128 || queryShape->GetStorageShape().GetDim(AXIS_0) < 1) {
-        printf("Lightning indexer pto get invalid batch value.\n");
+        printf("%sError:%s Lightning indexer pto get invalid batch value, please set the batch value between 1 and 128.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
  
     if (queryShape->GetStorageShape().GetDim(AXIS_1) != weightsShape->GetStorageShape().GetDim(AXIS_1) || 
         queryShape->GetStorageShape().GetDim(AXIS_1) > 4 || queryShape->GetStorageShape().GetDim(AXIS_1) <= 0) {
-        printf("Lightning indexer pto get invalid s1 value.\n");
+        printf("%sError:%s Lightning indexer pto get invalid s1 value, please set the s1 value between 1 and 4.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
  
@@ -121,7 +123,7 @@ ge::graphStatus TilingLightningIndexerPto(gert::TilingContext *context)
     }
     
     if (LightningIndexerPtoCheck(context) != ge::GRAPH_SUCCESS) {
-        printf("Lightning indexer pto get invalid tensor.\n");
+        printf("%sError:%s Lightning indexer pto get invalid tensor.\n", RED, RESET);
         return ge::GRAPH_FAILED;
     }
 

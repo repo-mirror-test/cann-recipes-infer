@@ -21,7 +21,6 @@ the software repository for the full text of the License.
 #include "tilefwk/tilefwk.h"
 #include "tilefwk/op_registry.h"
 #include "tilefwk/tilefwk_op.h"
-#include "tilefwk/config_manager.h"
 
 namespace npu::tile_fwk {
 
@@ -173,8 +172,8 @@ void SetTileConfig(NSASimpleParams &params) {
 void DynamicDecodeSparseAttentionPtoPto(uint64_t configKey) {
     NSASimpleParams params = NSASimpleParams::getDecodeParams();
 
-    config::SetHostConfig(KEY_ONLY_CODEGEN, true);
-    config::SetCodeGenConfig(KEY_CODEGEN_EXPRESSION_FUSION, true);
+    config::SetHostOption(ONLY_CODEGEN, true);
+    config::SetCodeGenOption(CODEGEN_EXPRESSION_FUSION, true);
 
     // set params
     params.b = -1;
