@@ -253,6 +253,7 @@ class Infer(nn.Module):
 
     def mtp_post_process(self, input_dict_mtp, cycle_idx, warm_up):
         # mtp model
+        infer_time_spec_mtp = []
         past_key_values_bak = input_dict_mtp.get("past_key_values")
         past_key_values_indexer_bak = input_dict_mtp.get("past_key_values_indexer")
         for next_index in range(self.next_n):
@@ -262,6 +263,7 @@ class Infer(nn.Module):
                                                                           cycle_idx=cycle_idx,
                                                                           warm_up=warm_up,
                                                                           prefix='[MTP]')
+            infer_time_spec_mtp.append(infer_time_spec)
             if next_index < self.next_n - 1:
                 # mtp model output process
                 past_key_values_cur = (past_key_values_bak[next_index],)
@@ -276,7 +278,7 @@ class Infer(nn.Module):
                 
         input_dict_mtp["past_key_values"] = past_key_values_bak
         input_dict_mtp['past_key_values_indexer'] = past_key_values_indexer_bak
-        return input_dict_mtp, infer_time_spec
+        return input_dict_mtp, infer_time_spec_mtp
     
     def mtp_model_output_process(self, model_inputs, input_dict, outputs, prev_hidden_states):
         if input_dict['is_prefill']:
@@ -341,14 +343,21 @@ class Infer(nn.Module):
         return input_dict
 
     def obtain_mtp_stats(self, total_accepted_num, cnt, infer_time_rec):
-        avg_accpeted_num = torch.mean(total_accepted_num)
-        logging.info("Finish inference, cnt is %d, average accepted num per batch is %d", cnt, avg_accpeted_num)
+        avg_accpeted_num = torch.mean(total_accepted_num).to(torch.int32)
+        logging.info(f"Finish inference, number of loop step is {cnt}, "
+                     f"draft token per batch is {cnt}*{self.next_n}, "
+                     f"average accepted num per batch is {avg_accpeted_num}")
 
         total_tokens = total_accepted_num + cnt
-        avg_infer_time = process_infer_time(infer_time_rec, total_tokens[0]) # logging for the first batch
-        logging.info(
-            f"{self.main_model.model_name} decode average inference time cost is {(avg_infer_time)*1000:.2f} ms")
+        equivalent_infer_time = process_infer_time(infer_time_rec, total_tokens[0]) # logging for the first batch
+        avg_infer_time = process_infer_time(infer_time_rec, len(infer_time_rec)) # logging for the first batch
 
+        logging.info(
+            f"{self.main_model.model_name} main and mtp model decode average inference time cost"
+            f" is {(avg_infer_time)*1000:.2f} ms")
+        logging.info(
+            f"{self.main_model.model_name} model average equivalent latency of MTP{self.next_n}"
+            f" is {(equivalent_infer_time)*1000:.2f} ms")
         return avg_infer_time
 
     def get_prefill_profile_cycle(self, enable_profiler):
@@ -521,8 +530,7 @@ class Infer(nn.Module):
                                                         mtp_argdict_single_cycle,
                                                         cycle_idx=cycle_idx,
                                                         warm_up=warm_up)
-            infer_time_rec.append(infer_time_main)
-            infer_time_rec.append(infer_time_mtp)
+            infer_time_rec.append(infer_time_main + sum(infer_time_mtp))
 
         prof.step()
         return input_dict_main_single_cycle, input_dict_mtp_single_cycle, mtp_argdict_single_cycle
@@ -710,8 +718,8 @@ class Infer(nn.Module):
                     infer_time_mtp = self.model_inference_mtp(input_dict_main, input_dict_mtp,
                                                               mtp_argdict, warm_up=warm_up)
 
-                    decode_infer_time_rec.append(infer_time_main)
-                    decode_infer_time_rec.append(infer_time_mtp)
+                    decode_infer_time_rec.append(infer_time_main + sum(infer_time_mtp))
+
                 prof.step()
                 generate_tokens += 1
                 decode_cnt += 1
