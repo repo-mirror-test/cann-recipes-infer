@@ -504,7 +504,8 @@ ge::graphStatus LIInfoParser::ValidateInputShapesMatch()
         OPS_ERR_IF((opParamInfo_.weights.shape->GetStorageShape().GetDim(0) != bSize_) ||
                        ((opParamInfo_.blockTable.tensor != nullptr) &&
                        (opParamInfo_.blockTable.tensor->GetStorageShape().GetDim(0) != bSize_)) ||
-                       (opParamInfo_.actualSeqLengths.tensor->GetShapeSize() != bSize_) ||
+                       ((opParamInfo_.actualSeqLengths.tensor != nullptr) &&
+                        (opParamInfo_.actualSeqLengths.tensor->GetShapeSize() != bSize_)) ||
                        (opParamInfo_.attenOut.shape->GetStorageShape().GetDim(0) != bSize_),
                    OPS_LOG_E(opName_, "BSND case input query, weight, actual_seq_lengths_key, block_table, sparse_indices dim 0 must be same."),
                    return ge::GRAPH_FAILED);
