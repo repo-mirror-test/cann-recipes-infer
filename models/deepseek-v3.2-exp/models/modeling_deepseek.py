@@ -783,8 +783,6 @@ class DeepseekIndexerAttention(nn.Module):
                 .reshape(prefill_mini_batch_size, -1).to(dtype=torch.int32, device="npu")
 
         self.enable_weight_nz = runner_settings.get("model_config").get("enable_weight_nz", True)
-        self.use_faquant = False
-        self.kv_scale = None
 
         self.indexer = Indexer(self.config, runner_settings, layer_idx, prefix=f"{prefix}.indexer", **kwargs)
         self.attn_func = self.apply_attention_fusion
@@ -793,6 +791,8 @@ class DeepseekIndexerAttention(nn.Module):
         self.global_rank = kwargs.get("global_rank")
         self.enable_multi_streams = self.runner_settings.get("model_config").get("enable_multi_streams", False)
         self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
+        if self.kv_cache_c8:
+            self.ckv_a_alpha = torch.nn.Parameter(torch.ones(1, dtype=torch.float), requires_grad=False)
         
     def mla_epilog(
         self,
@@ -1005,70 +1005,99 @@ class DeepseekIndexerAttention(nn.Module):
         hidden_states: torch.Tensor,
         cos_sin: torch.Tensor = None,
         past_key_value: Optional[Cache] = None,
-        is_prefill: bool = True,
         slot_mapping: Optional[torch.Tensor] = None,
         cp_input_dict: Optional[Dict] = None,
         c8_input_dict: Optional[Dict] = None,
     ):
         bsz, q_len, _ = hidden_states.size()
-        qr = self.q_a_layernorm(self.q_a_proj(hidden_states))
-        q = self.q_b_proj(qr)
-
-        if self.kv_cache_c8:
-            qr, q_scale = torch_npu.npu_dynamic_quant(qr)
-            c8_input_dict.update({'pertoken_scale': q_scale})
-
-        q = q.view(bsz, q_len, self.num_heads_per_rank, self.q_head_dim)
-        q_nope, q_pe = torch.split(
-            q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
-        )
-        q_nope = q_nope.view(-1, self.num_heads_per_rank, self.qk_nope_head_dim)
-        if self.kv_b_proj_w_k.shape[0] * self.kv_b_proj_w_k.shape[1] <= 65535:  # 65535: max value of uint16
-            q_nope = torch_npu.npu_transpose_batchmatmul(q_nope, self.kv_b_proj_w_k, bias=None, scale=None,
-                                                        perm_x1=(1, 0, 2), perm_x2=(0, 1, 2), perm_y=(1, 0, 2)
-                                                        )  # (b*s, n, d)
-            q_nope = q_nope.view(bsz, q_len, self.num_heads_per_rank, self.kv_lora_rank)
+        mla_prolog_slot_mapping = slot_mapping
+        if self.cp_size > 1:
+            nope_cache = cp_input_dict['cp_tmp_kv_cache_nope']
+            rope_cache = cp_input_dict['cp_tmp_kv_cache_rope']
+            mla_prolog_slot_mapping = cp_input_dict['mla_prolog_slot_mapping']
+            _, _, cos, sin = cos_sin
         else:
-            q_nope = (
-                torch.matmul(q_nope.transpose(0, 1), self.kv_b_proj_w_k)
-                .transpose(0, 1)
-                .view(bsz, q_len, self.num_heads_per_rank, self.kv_lora_rank)
-            )
-
-        enable_multi_streams = self.enable_multi_streams and not is_prefill
-        with npu_stream_switch(enable_multi_streams, '11'):
-            latent_cache = self.kv_a_proj_with_mqa(hidden_states)
-            if self.cp_size > 1 and is_prefill:
-                kv_all = latent_cache.new_empty([bsz * q_len * self.cp_size, latent_cache.shape[-1]])
-                dist.all_gather_into_tensor(kv_all, latent_cache.view(bsz * q_len, -1), \
-                                        group=self.hccl_comm_dict.get("cp_group", None))
-                outputs_list = list(torch.split(kv_all, cp_input_dict["reverse_split_list"], dim=0))
-                latent_cache = torch.cat(
-                    [outputs_list[i] for i in cp_input_dict["cp_reverse_index"]], dim=0
-                ).view(bsz, -1, latent_cache.shape[-1])
-            
-            latent_cache = latent_cache.view(-1, 1, 1, self.kv_lora_rank + self.qk_rope_head_dim)  # (B,S,N,D)
             nope_cache = past_key_value[self.layer_idx][0]
             rope_cache = past_key_value[self.layer_idx][1]
-            # rope
-            if self.cp_size > 1 and is_prefill:
-                cos, sin, cos_q, sin_q = cos_sin
+            cos, sin = cos_sin
+
+        cos = cos.view(-1, 1, 1, self.qk_rope_head_dim)
+        sin = sin.view(-1, 1, 1, self.qk_rope_head_dim)
+        hidden_states = hidden_states.view(bsz * q_len, -1)
+
+        dequant_scale_w_uq_qr = self.q_b_proj.weight_scale.view(1, -1) if \
+                                self.config.quant_config is not None else None
+        # when weight_quant_mode = 0, no quant applied, when 1 only qb quantization is enabled
+        weight_quant_mode = 1 if self.config.quant_config is not None else 0
+        mla_prolog_input_args = {
+            "token_x": hidden_states,
+            "weight_dq": self.q_a_proj.weight,
+            "weight_uq_qr": self.q_b_proj.weight,
+            "weight_uk": self.kv_b_proj_w_k,
+            "weight_dkv_kr": self.kv_a_proj_with_mqa.weight,
+            "rmsnorm_gamma_cq": self.q_a_layernorm.weight,
+            "rmsnorm_gamma_ckv": self.kv_a_layernorm.weight,
+            "rope_sin": sin.squeeze(1).squeeze(1),
+            "rope_cos": cos.squeeze(1).squeeze(1),
+            "kv_cache": nope_cache,
+            "kr_cache": rope_cache,
+            "cache_index": mla_prolog_slot_mapping.view(-1),
+            "dequant_scale_w_uq_qr": dequant_scale_w_uq_qr,
+            "rmsnorm_epsilon_cq": self.q_a_layernorm.variance_epsilon,
+            "rmsnorm_epsilon_ckv": self.kv_a_layernorm.variance_epsilon,
+            "cache_mode": "PA_BSND",
+            "query_norm_flag": True,
+            "weight_quant_mode": weight_quant_mode
+        }
+        if self.kv_cache_c8:
+            mla_prolog_input_args.update({
+                "kr_cache": hidden_states.unsqueeze(0),
+                "kv_cache_quant_mode": 3,
+                "query_quant_mode": 0,
+                "ckvkr_repo_mode": 1,
+                "quant_scale_repo_mode": 1,
+                "tile_size": 128,
+                "k_nope_clip_alpha": self.ckv_a_alpha
+            })
+            latent_cache = nope_cache.view(-1, nope_cache.shape[-1])[: bsz * q_len, :]
+        else:
+            latent_cache = torch.cat([
+                nope_cache.view(-1, nope_cache.shape[-1])[: bsz * q_len, :],
+                rope_cache.view(-1, self.qk_rope_head_dim)[: bsz * q_len, :]], dim=-1)
+        
+        q_nope, q_pe, dequant_scale_q_nope, qr, dequant_q_norm = torch.ops.custom.npu_mla_prolog_v3(
+            **mla_prolog_input_args
+        )
+
+        if self.cp_size > 1:
+            # nope and rope is aligned by pa block, so need slice
+            kv_all = latent_cache.new_empty([bsz * q_len * self.cp_size, latent_cache.shape[-1]])
+            dist.all_gather_into_tensor(kv_all, latent_cache.view(bsz * q_len, -1), \
+                                    group=self.hccl_comm_dict.get("cp_group", None))
+            outputs_list = list(torch.split(kv_all, cp_input_dict["reverse_split_list"], dim=0))
+            latent_cache = torch.cat(
+                [outputs_list[i] for i in cp_input_dict["cp_reverse_index"]], dim=0
+            ).view(bsz, -1, latent_cache.shape[-1])
+
+            nope_cache = past_key_value[self.layer_idx][0]
+            rope_cache = past_key_value[self.layer_idx][1]
+            if self.kv_cache_c8:
+                torch_npu.npu_scatter_nd_update_(nope_cache.view(-1, nope_cache.shape[-1]),
+                                             slot_mapping.view(-1, 1),
+                                             latent_cache.view(-1, latent_cache.shape[-1]))
+                c8_input_dict.update({'pertoken_scale': dequant_q_norm})
             else:
-                cos, sin = cos_sin
-                cos_q, sin_q = cos, sin
-            cos = cos.view(-1, 1, 1, self.qk_rope_head_dim)
-            sin = sin.view(-1, 1, 1, self.qk_rope_head_dim)
-            k_pe, k_nope = torch_npu.npu_kv_rmsnorm_rope_cache_v2(
-                latent_cache, self.kv_a_layernorm.weight,
-                cos, sin, slot_mapping.view(-1),
-                rope_cache, nope_cache,
-                epsilon=self.kv_a_layernorm.variance_epsilon,
-                cache_mode="PA",
-                is_output_kv=is_prefill
-            )
-            q_pe = q_pe.view(-1, self.num_heads_per_rank, 1, self.qk_rope_head_dim)
-            q_pe = torch_npu.npu_interleave_rope(q_pe, cos_q, sin_q).view(
-                bsz, -1, self.num_heads_per_rank, self.qk_rope_head_dim)  # (B,S,N,D)
+                k_nope = latent_cache.view(-1, latent_cache.shape[-1])[:, : nope_cache.shape[-1]]
+                k_pe = latent_cache.view(-1, latent_cache.shape[-1])[:, nope_cache.shape[-1]:]
+                torch_npu.npu_scatter_nd_update_(nope_cache.view(-1, nope_cache.shape[-1]),
+                                                slot_mapping.view(-1, 1),
+                                                k_nope.view(-1, k_nope.shape[-1]))
+                torch_npu.npu_scatter_nd_update_(rope_cache.view(-1, self.qk_rope_head_dim),
+                                                slot_mapping.view(-1, 1),
+                                                k_pe.view(-1, k_pe.shape[-1]))
+        k_nope = nope_cache
+        k_pe = rope_cache
+
         return q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache
 
     def mlaprolog_decode(
@@ -1086,22 +1115,44 @@ class DeepseekIndexerAttention(nn.Module):
         cos = cos.view(-1, 1, 1, self.qk_rope_head_dim)
         sin = sin.view(-1, 1, 1, self.qk_rope_head_dim)
         hidden_states = hidden_states.view(bsz * q_len, -1)
+        dequant_scale_w_uq_qr = self.q_b_proj.weight_scale.view(1, -1) if \
+                                self.config.quant_config is not None else None
+        # when weight_quant_mode = 0, no quant applied, when 1 only qb quantization is enabled
+        weight_quant_mode = 1 if self.config.quant_config is not None else 0
+        
+        mla_prolog_input_args = {
+            "token_x": hidden_states,
+            "weight_dq": self.q_a_proj.weight,
+            "weight_uq_qr": self.q_b_proj.weight,
+            "weight_uk": self.kv_b_proj_w_k,
+            "weight_dkv_kr": self.kv_a_proj_with_mqa.weight,
+            "rmsnorm_gamma_cq": self.q_a_layernorm.weight,
+            "rmsnorm_gamma_ckv": self.kv_a_layernorm.weight,
+            "rope_sin": sin.squeeze(1).squeeze(1),
+            "rope_cos": cos.squeeze(1).squeeze(1),
+            "kv_cache": nope_cache,
+            "kr_cache": rope_cache,
+            "cache_index": slot_mapping.view(-1),
+            "dequant_scale_w_uq_qr": dequant_scale_w_uq_qr,
+            "rmsnorm_epsilon_cq": self.q_a_layernorm.variance_epsilon,
+            "rmsnorm_epsilon_ckv": self.kv_a_layernorm.variance_epsilon,
+            "cache_mode": "PA_BSND",
+            "query_norm_flag": True,
+            "weight_quant_mode": weight_quant_mode
+        }
+        if self.kv_cache_c8:
+            mla_prolog_input_args.update({
+                "kr_cache": hidden_states.unsqueeze(0),
+                "kv_cache_quant_mode": 3,
+                "query_quant_mode": 0,
+                "ckvkr_repo_mode": 1,
+                "quant_scale_repo_mode": 1,
+                "tile_size": 128,
+                "k_nope_clip_alpha": self.ckv_a_alpha
+            })
+
         q_nope, q_pe, dequant_scale_q_nope, qr, dequant_q_norm = torch.ops.custom.npu_mla_prolog_v3(
-            token_x=hidden_states,
-            weight_dq=self.q_a_proj.weight, weight_uq_qr=self.q_b_proj.weight,
-            weight_uk=self.kv_b_proj_w_k, weight_dkv_kr=self.kv_a_proj_with_mqa.weight,
-            rmsnorm_gamma_cq=self.q_a_layernorm.weight,
-            rmsnorm_gamma_ckv=self.kv_a_layernorm.weight,
-            rope_sin=sin.squeeze(1).squeeze(1), rope_cos=cos.squeeze(1).squeeze(1),
-            cache_index=slot_mapping.view(-1),
-            kv_cache=nope_cache,
-            kr_cache=rope_cache,
-            dequant_scale_w_uq_qr=self.q_b_proj.weight_scale.view(1, -1),
-            rmsnorm_epsilon_cq=self.q_a_layernorm.variance_epsilon,
-            rmsnorm_epsilon_ckv=self.kv_a_layernorm.variance_epsilon,
-            cache_mode="PA_BSND",
-            query_norm_flag=True,
-            weight_quant_mode=1
+            **mla_prolog_input_args
         )
         k_nope = nope_cache
         k_pe = rope_cache
@@ -1127,7 +1178,7 @@ class DeepseekIndexerAttention(nn.Module):
         **kwargs,
     ):
         c8_input_dict = {}
-        if self.kv_cache_c8 and not is_prefill:
+        if not is_prefill:
             q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache = self.mlaprolog_decode(
                     hidden_states=hidden_states, cos_sin=cos_sin,
                     past_key_value=past_key_value, slot_mapping=slot_mapping,
@@ -1136,18 +1187,17 @@ class DeepseekIndexerAttention(nn.Module):
         else:
             q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache = self.mlaprolog_prefill(
                 hidden_states=hidden_states, cos_sin=cos_sin,
-                past_key_value=past_key_value, is_prefill=is_prefill, 
-                slot_mapping=slot_mapping, cp_input_dict=cp_input_dict,
-                c8_input_dict=c8_input_dict
+                past_key_value=past_key_value, slot_mapping=slot_mapping,
+                cp_input_dict=cp_input_dict, c8_input_dict=c8_input_dict
             )
         bsz = actual_seq_lengths_kv.shape[0]
         query_states = (q_nope.view(bsz, -1, self.num_heads_per_rank, self.kv_lora_rank), \
-                        q_pe.view(bsz, -1, self.num_heads_per_rank, self.qk_rope_head_dim))  # 1,B*S,N,D -> B,S,N,D
+                    q_pe.view(bsz, -1, self.num_heads_per_rank, self.qk_rope_head_dim))  # 1,B*S,N,D -> B,S,N,D
         key_states = (k_nope.view(bsz, -1, 1, self.kv_lora_rank), \
-                      k_pe.view(bsz, -1, 1, self.qk_rope_head_dim))  # 1,B*S,1,D -> B,S,1,D
+                    k_pe.view(bsz, -1, 1, self.qk_rope_head_dim) if k_pe is not None else None)  # 1,B*S,1,D -> B,S,1,D
         if not is_prefill:
             key_states = (nope_cache.view(bsz, -1, 1, self.kv_lora_rank), \
-                        rope_cache.view(bsz, -1, 1, self.qk_rope_head_dim))
+                        rope_cache.view(bsz, -1, 1, self.qk_rope_head_dim) if rope_cache is not None else None)
 
         block_table = self.prefill_block_table if is_prefill else self.block_table
 
@@ -1225,8 +1275,6 @@ class DeepseekIndexerAttention(nn.Module):
             "query": q_nope,
             "key": k_nope,
             "value": k_nope,
-            "query_rope": q_pe,
-            "key_rope": k_pe,
             "sparse_indices": topk_indices,
             "scale_value": self.softmax_scale,
             "actual_seq_lengths_query": actual_seq_qlen.to(torch.int32),
@@ -1238,7 +1286,28 @@ class DeepseekIndexerAttention(nn.Module):
             "sparse_mode": 3,
         }
         
-        slc_fa_fusion = torch.ops.custom.npu_sparse_flash_attention(**slc_fa_input_kwargs)
+        if self.kv_cache_c8:
+            q = torch.cat([q_nope, q_pe], dim=-1).contiguous()
+            slc_fa_input_kwargs.update({
+                "query": q,
+                "key_quant_mode": 2,
+                "value_quant_mode": 2,
+                "attention_mode": 2,
+                "quant_scale_repo_mode": 1,
+                "tile_size": 128,
+                "rope_head_dim": 64,
+                "key_dequant_scale": None,
+                "value_dequant_scale": None
+            })
+            
+            slc_fa_fusion = torch.ops.custom.npu_sparse_flash_attention_antiquant(**slc_fa_input_kwargs)
+            
+        else:
+            slc_fa_input_kwargs.update({
+                "query_rope": q_pe,
+                "key_rope": k_pe,
+            })
+            slc_fa_fusion = torch.ops.custom.npu_sparse_flash_attention(**slc_fa_input_kwargs)
         
         slc_fa_fusion = slc_fa_fusion.transpose(0, 1)
         return slc_fa_fusion
@@ -1782,8 +1851,11 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
     
     def prepare_input_cp(
         self,
-        kv_len: torch.IntTensor = None,
+        input_ids: torch.Tensor,
+        kv_len: torch.Tensor,
     ):
+        batch_size, seq_len = input_ids.shape
+        kv_len = torch.tensor([seq_len for _ in range(batch_size)], device=kv_len.device, dtype=kv_len.dtype)
         cp_input_dict = {}
         bs_per_cp_group = kv_len.shape[-1]
 
@@ -1816,6 +1888,38 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         cp_input_dict.update({"kv_len_prev": kv_len_prev})
         kv_len_next = kv_len * (self.cp_size * 2 - self.global_rank)
         cp_input_dict.update({"kv_len_next": kv_len_next, "actual_seq_q": kv_len.cumsum(dim=-1)})
+
+        cp_tmpkv_cache_num_block = (batch_size * seq_len // self.cp_size + 
+                                    self.block_size) // self.block_size
+        
+        cache_last_dim = self.config.kv_lora_rank + self.config.qk_rope_head_dim * 2 + 16 \
+            if self.kv_cache_c8 else self.config.kv_lora_rank
+        cp_tmpkv_cache_nope_shape = (
+                        cp_tmpkv_cache_num_block,
+                        self.block_size,
+                        1,
+                        cache_last_dim
+                    )
+
+        cp_tmpkv_cache_rope_shape = (
+                        cp_tmpkv_cache_num_block,
+                        self.block_size,
+                        1,
+                        self.config.qk_rope_head_dim
+                    )
+        dtype = torch.int8 if self.kv_cache_c8 else self.config.torch_dtype
+        cp_tmp_kv_cache_nope = torch.zeros(cp_tmpkv_cache_nope_shape, dtype=dtype, device=input_ids.device)
+        cp_input_dict.update({"cp_tmp_kv_cache_nope": cp_tmp_kv_cache_nope})
+        if not self.kv_cache_c8:
+            cp_tmp_kv_cache_rope = torch.zeros(cp_tmpkv_cache_rope_shape, dtype=dtype, device=input_ids.device)
+        else:
+            cp_tmp_kv_cache_rope = None
+        cp_input_dict.update({"cp_tmp_kv_cache_rope": cp_tmp_kv_cache_rope})
+
+        mla_prolog_slot_mapping = torch.arange(batch_size * seq_len // self.cp_size,
+                                               dtype=kv_len.dtype, device=input_ids.device)
+        cp_input_dict.update({"mla_prolog_slot_mapping": mla_prolog_slot_mapping})
+
         return cp_input_dict
 
     def forward(
@@ -1835,9 +1939,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         slot_mapping: Optional[torch.Tensor] = None,
         **kwargs
     ):
-        batch_size, seq_len = input_ids.shape
         cp_input_dict = self.prepare_input_cp(
-            torch.tensor([seq_len for _ in range(batch_size)], device=kv_len.device, dtype=kv_len.dtype)
+            input_ids, kv_len
         ) if is_prefill and self.cp_size > 1 else None
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
@@ -1907,14 +2010,19 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         num_hidden_layers=61,
     ):
         cache_seq_len = self.max_position_embeddings
-        dtype = self.config.torch_dtype
+        dtype = torch.int8 if self.kv_cache_c8 else self.config.torch_dtype
 
+        # When the kvcache INT8 quantization is enabled 
+        # nope_cache, rope_cache, and nope_scale need to be concatenated for SFA/MLAprolog kernel in INT8 dtype.
+        # kv_lora_rank(INT8) + qk_rope_head_dim(BF16) * 2(->INT8) + kv_scale(FP32) * 4(->INT8)
+        cache_last_dim = self.config.kv_lora_rank + self.config.qk_rope_head_dim * 2 + 4 * 4 \
+            if self.kv_cache_c8 else self.config.kv_lora_rank
         past_key_values = ()
         cache_nope_shape = (
                         self.kv_cache_num_block,
                         self.block_size,
                         1,
-                        self.config.kv_lora_rank
+                        cache_last_dim
                     )
 
         cache_rope_shape = (
@@ -1926,8 +2034,12 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
 
         for _ in range(num_hidden_layers):
             cache_nope = torch.zeros(cache_nope_shape, dtype=dtype, device=input_ids.device)
-            cache_rope = torch.zeros(cache_rope_shape, dtype=dtype, device=input_ids.device)
-            past_key_values += ((cache_nope, cache_rope),)
+            if self.kv_cache_c8:
+                past_key_values += ((cache_nope, None),)
+            else:
+                cache_rope = torch.zeros(cache_rope_shape, dtype=dtype, device=input_ids.device)
+                past_key_values += ((cache_nope, cache_rope),)
+
         return past_key_values
 
     def init_cache_for_indexer(
@@ -2234,7 +2346,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
         batch_size, seq_length = input_ids.shape
         if is_prefill:	
             cp_input_dict = self.prepare_input_cp(
-                torch.tensor([seq_length for _ in range(batch_size)], device=kv_len.device, dtype=kv_len.dtype)
+                input_ids, kv_len
             )
         hidden_states = self.model.calc_input_embeddings(input_ids, is_prefill)
 

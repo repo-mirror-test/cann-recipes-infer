@@ -471,7 +471,7 @@ class Infer(nn.Module):
                 input_dict_single_cycle['past_key_values'] += (
                     (
                         k.narrow(0, j * batch_len, batch_len),
-                        v.narrow(0, j * batch_len, batch_len),
+                        v.narrow(0, j * batch_len, batch_len) if v is not None else None,
                     ),
                 )
             input_dict_single_cycle['past_key_values_indexer'] = ()
@@ -492,8 +492,11 @@ class Infer(nn.Module):
         else:
             k, v = self.tmp_kv[0]
             input_dict_single_cycle['past_key_values'] = \
-                tuple([(k.narrow(0, j * batch_len, batch_len), v.narrow(0, j * batch_len, batch_len), ), ] \
-                    * self.main_model.model.config.num_hidden_layers)
+                tuple(
+                    [(k.narrow(0, j * batch_len, batch_len), 
+                        v.narrow(0, j * batch_len, batch_len) if v is not None else None, ), 
+                    ] * self.main_model.model.config.num_hidden_layers
+                    )
             input_dict_single_cycle['past_key_values_indexer'] = \
                 tuple([(self.tmp_indexer_kv[0][0].narrow(0, j * batch_len, batch_len), )] 
                     * self.main_model.model.config.num_hidden_layers)

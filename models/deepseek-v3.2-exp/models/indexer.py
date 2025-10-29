@@ -317,7 +317,7 @@ class Indexer(nn.Module):
             if past_key_scales_indexer is not None:
                 past_key_scales = past_key_scales_indexer[self.layer_idx][0]
                 # for long seq input, should use npu_scatter_nd_update_
-                torch_npu.npu_scatter_nd_update_(past_key_scales.view(-1, self.head_dim),
+                torch_npu.npu_scatter_nd_update_(past_key_scales.view(-1, 1),
                                                     slot_mapping.view(-1, 1),
                                                     key_dequant_scale.view(-1, key_dequant_scale.shape[-1]))
             indexer_input.update({"key_dequant_scale": past_key_scales,
