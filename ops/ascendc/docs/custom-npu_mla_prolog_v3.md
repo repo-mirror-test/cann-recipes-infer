@@ -128,7 +128,7 @@ custom.npu_mla_prolog_v3(Tensor token_x, Tensor weight_dq, Tensor weight_uq_qr, 
 
 -   **actual_seq_len**（`Tensor`，可选）：预留参数，当前版本暂未使用。
 
--   **k_nope_clip_alpha**（`float`，可选）：表示kv_cache做clip操作时的缩放因子，当前仅在kvcache per-tile量化场景下使用。不支持非连续，数据格式支持ND，数据类型支持`float`，shape为[1]。
+-   **k_nope_clip_alpha**（`Tensor`，可选）：表示kv_cache做clip操作时的缩放因子，当前仅在kvcache per-tile量化场景下使用。不支持非连续，数据格式支持ND，数据类型支持`float`，shape为[1]。
 
 -   **rmsnorm_epsilon_cq**（`float`，可选）：计算$c^Q$的RmsNorm公式中的$\epsilon$参数，Host侧参数。用户未特意指定时，建议传入1e-05，仅支持double类型，默认值为1e-05。
 
@@ -140,7 +140,7 @@ custom.npu_mla_prolog_v3(Tensor token_x, Tensor weight_dq, Tensor weight_uq_qr, 
 
 -   **weight_quant_mode**（`int`，可选）：表示weight_dq、weight_uq_qr、weight_uk、weight_dkv_kr的量化模式，Host侧参数。仅支持int64类型，0表示非量化，1表示weight_uq_qr量化，2表示weight_dq、 weight_uk、weight_dkv_kr量化，默认值为0。
 
--   **kv_cache_quant_mode**（`int`，可选）：表示kv_cache的量化模式，Host侧参数。仅支持int64类型，0表示非量化，2表示per-channel量化，默认值为0。
+-   **kv_cache_quant_mode**（`int`，可选）：表示kv_cache的量化模式，Host侧参数。仅支持int64类型，0表示非量化，1表示per-tensor量化，2表示per-channel量化，3-表示per-tile量化，默认值为0。
 
 -   **query_quant_mode**（`int`，可选）：表示query的量化模式，Host侧参数。仅支持int64类型，0表示非量化，1表示per-token-head量化，默认值为0。
 
@@ -175,6 +175,7 @@ custom.npu_mla_prolog_v3(Tensor token_x, Tensor weight_dq, Tensor weight_uq_qr, 
     | Hcq          | q 低秩矩阵维度                 | 取值固定为：1536                                                           |
     | N            | Head-Num（多头数）             | 取值范围：1、2、4、8、16、32、64、128                                       |
     | Hckv         | kv 低秩矩阵维度                | 取值固定为：512                                                             |
+    | Htile        | kv_cache per-tile量化时的矩阵维度  | 取值固定为：656                                                          |
     | D            | qk 不含位置编码维度            | 取值固定为：128                                                             |
     | Dr           | qk 位置编码维度                | 取值固定为：64                                                              |
     | Nkv          | kv 的 head 数                  | 取值固定为：1                                                               |
@@ -452,13 +453,13 @@ custom.npu_mla_prolog_v3(Tensor token_x, Tensor weight_dq, Tensor weight_uq_qr, 
       <td> (BlockNum, BlockSize, Nkv, Dr)</td>
       <td>INT8</td>
       <td> (BlockNum, BlockSize, Nkv, Dr)</td>
-      <td>INT8</td>
-      <td> (BlockNum, BlockSize, Nkv, Dr)</td>
       <td>BFLOAT16</td>
       <td> (BlockNum, BlockSize, Nkv, Dr)</td>
       <td>BFLOAT16</td>
       <td> (BlockNum, BlockSize, Nkv, Dr)</td>
-      <td>INT8</td>
+      <td>BFLOAT16</td>
+      <td> (BlockNum, BlockSize, Nkv, Dr)</td>
+      <td>BFLOAT16</td>
       <td> (BlockNum, BlockSize, Nkv, Dr)</td>
     </tr>
     <tr>
@@ -678,8 +679,8 @@ custom.npu_mla_prolog_v3(Tensor token_x, Tensor weight_dq, Tensor weight_uq_qr, 
       <td>/</td>
       <td>FLOAT</td>
       <td> · (B*S, N, 1) <br> · (T, N, 1)</td>
-      <td>FLOAT</td>
-      <td> · (B*S, N, 1) <br> · (T, N, 1)</td>
+      <td>无需赋值</td>
+      <td>/</td>
     </tr>
   </table>
   </div>
