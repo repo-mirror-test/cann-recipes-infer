@@ -90,4 +90,4 @@ Qwen3-MoE模型是2025年开源的大语言模型，包括Qwen3-235B-A22B与Qwen
 
 ## 优化点参考
 
-本样例采用的详细优化点介绍可参见[基于Atlas A3的Qwen3-MoE模型低时延推理性能优化实践](../../docs/qwen3_moe_optimization.md)。
+本样例采用的详细优化点介绍可参见[基于Atlas A3的Qwen3-MoE模型低时延推理性能优化实践](../../docs/models/qwen3_moe/qwen3_moe_optimization.md)。
