@@ -3,7 +3,7 @@ NPU TileLang 使用指南
 # 1. 准备
 ## a) 镜像准备
 ### 获取 docker 镜像
-从[ARM镜像地址](https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/cann8.3.rc1.alpha002/pt2.5.1/aarch/ascendc/cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image.tar)中下载 docker 镜像，然后上传到需要A3服务器每个节点上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image.tar`
+从[ARM镜像地址](https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/cann8.3.rc1.alpha002/pt2.5.1/aarch/ascendc/cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image_quick_start.tar)中下载 docker 镜像，然后上传到需要A3服务器每个节点上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image_quick_start.tar`
 
 ### 拉起 docker 容器
 
@@ -32,7 +32,7 @@ NPU TileLang 使用指南
       --net=host \
       --shm-size=128g \
       --privileged \
-      cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image:v0.1 /bin/bash
+      cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_aarch_image:quick_start /bin/bash
   ```
   进入容器：
   ```
@@ -40,10 +40,24 @@ NPU TileLang 使用指南
   ```
 
 ## b) 设置环境变量
-  ```bash
+  ```
   source /usr/local/Ascend/ascend-toolkit/set_env.sh
   ```
+## c) 快速启动TileLang
+  我们为用户提供了完整的docker镜像，TileLang代码仓及其所需要的依赖已经全部预装，支持全量基础AscendC算子Api。您可以直接运行代码，也可根据第2节自行安装TileLang。
+  
+  以exp为例，直接运行代码仅需执行如下指令：
+  ```
+  cd /workspace/tilelang-ascend
+  source set_env.sh
+  python /workspace/tilelang-ascend/examples/elementwise/elementwise_exp.py 
+  ```
 
+  成功后会打印：
+  ```
+  init successful!
+  Kernel Output Match!
+  ```
 # 2. TileLang 安装
 
 安装TileLang有几种方法，更多详情请参考TileLang社区的安装指南：
