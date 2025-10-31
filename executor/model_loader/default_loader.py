@@ -181,8 +181,7 @@ class DefaultModelLoader(BaseModelLoader):
                 if weights_not_loaded:
                     if all("smooth_scale" in name for name in weights_not_loaded):
                         logger.warning(
-                            "Following weights were not initialized from "
-                            f"checkpoint: {weights_not_loaded}")
+                            "Smooth scales were not initialized from checkpoint.")
                     else:
                         pass
                         # raise ValueError(

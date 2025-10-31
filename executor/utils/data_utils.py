@@ -102,6 +102,7 @@ def build_dataset_input(tokenizer, prompts, input_max_len):
     prompts_inputids = tokenizer(prompts).input_ids
     out_prompts = []
     for prompt_inputids in prompts_inputids:
+        # Provide system prompt for the text; the default is a summary, which can be modified as needed.
         prompt = "Please read a part of the book below, and then give me the summary.\n[start of the book]\n" + \
             tokenizer.decode(prompt_inputids[:input_max_len - 70], skip_special_tokens=True) + \
             "\n[end of the book]\n\nNow you have read it. Please summarize it for me. " + \
