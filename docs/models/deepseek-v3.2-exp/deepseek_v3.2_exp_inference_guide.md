@@ -13,7 +13,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，可利用稀疏架构 
 - 基于AscendC实现NPU LI和SFA融合Kernel，包含Lightning Indexer和Sparse Flash Attention，发挥稀疏计算潜力，AscendC Kernel[技术文档](./deepseek_v3.2_exp_ascendc_operator_guide.md)和[代码](../../../ops/ascendc/README.md)已开源
 - 基于自研PyPTO框架实现NPU DSA，提高融合算子编程易用性。不仅实现了LI融合Kernel，同时实现了更大范围的Decode Attention融合，PyPTO Kernel[技术文档](./deepseek_v3.2_exp_pypto_operator_guide.md)和[代码](../../../ops/pypto/README.md)已开源
 - 开源社区TileLang同步支持DSA结构中的LI和SFA算子，TileLang Kernel[技术文档](./deepseek_v3.2_exp_tilelang_operator_guide.md)和[代码](../../../ops/tilelang/README.md)已开源
-- 基于上述优化点，CANN已0day支持DeepSeek-V3.2-Exp BF16推理部署，1day支持Int8量化。Prefill和Decode的参考性能：采用BF16精度无损方式，64卡128K长序列TTFT小于2s（无缓存命中），TPOT小于30ms；Int8量化场景64卡128K长序列TPOT小于25ms
+- 基于上述优化点，CANN已0day支持DeepSeek-V3.2-Exp BF16推理部署，1day支持Int8量化。Prefill和Decode的参考性能：采用BF16精度无损方式，64卡128K长序列TTFT小于2s（无缓存命中），TPOT小于30ms；W8A8C8量化场景64卡128K长序列TPOT小于20ms
 
 ## Outline
 
@@ -23,6 +23,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，可利用稀疏架构 
 - [融合Kernel](##融合Kernel)
 - [量化策略](#量化策略)
 - [多流并行优化](##多流并行优化)
+- [性能Benchmark](##性能Benchmark)
 - [Future Plan](##Future-Plan)
 
 ## DeepSeek-V3.2-Exp vs V3.1
@@ -305,7 +306,17 @@ hidden_states = hidden_states_share + hidden_states_router
 </p>
 
 
+## 性能Benchmark
 
+基于Atlas A3，本实践对 DeepSeek V3.2 Exp 与 DeepSeek V3.1 W8A8C8版本进行了性能Benchmark测试。从吞吐对比曲线可见，随着序列长度增加，DeepSeek V3.2 Exp 的性能优势逐步扩大，当序列长度达到 128K 时，其吞吐达到 DeepSeek V3.1 的 450%。
+
+长序列场景下，模型吞吐性能仍存在进一步优化空间。当前受限于 KVCache 内存容量，batch size 难以进一步提升，后续可通过 KVCache Offload 技术方案进一步提升吞吐。
+
+<p align="center">
+  <img src="./figures/benchmark.jpg" width="50%" alt="benchmark">
+</p>
+
+注：性能数据基于 MTP3 与 perfect eplb配置采集，平均 3 个 draft token 中 accept token 为 1.44 个。
 
 ## Future Plan
 

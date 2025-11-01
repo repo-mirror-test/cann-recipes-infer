@@ -11,7 +11,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
 
 操作系统：Linux ARM
 
-镜像版本：cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image:v0.3
+镜像版本：cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image:v0.4
 
 驱动版本：Ascend HDK 25.2.0
 > npu-smi info 检查Ascend NPU固件和驱动是否正确安装。如果已安装，通过命令`npu-smi info`确认版本是否为 25.2.0。如果未安装或者版本不是 25.2.0，请先下载[固件和驱动包](https://support.huawei.com/enterprise/zh/ascend-computing/ascend-hdk-pid-252764743/software/264360782?idAbsPath=fixnode01|23710424|251366513|254884019|261408772|252764743)，然后根据[指导](https://hiascend.com/document/redirect/CannCommunityInstSoftware)自行安装。
@@ -39,7 +39,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
   下载[DeepSeek-V3.2-Exp原始fp8权重](https://huggingface.co/deepseek-ai/DeepSeek-V3.2-Exp)，并上传到Atlas A3各节点某个固定的路径下，比如`/data/models/DeepSeek-V3.2-Exp-fp8`。
 
 ### 获取 docker 镜像
-  从[ARM镜像地址](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.3.tar)中下载 docker 镜像，然后上传到A3服务器的每个节点上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.3.tar`。
+  从[ARM镜像地址](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.4.tar)中下载 docker 镜像，然后上传到A3服务器的每个节点上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.4.tar`。
 
 ### 拉起 docker 容器
 
@@ -68,7 +68,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
       --net=host \
       --shm-size=128g \
       --privileged \
-      cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image:v0.3 /bin/bash
+      cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image:v0.4 /bin/bash
   ```
   在各个节点上通过如下命令进入容器：
   ```
@@ -132,4 +132,4 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
 
 ## 附录
 ### FAQ
-- **HCCL_BUFFSIZE不足问题**：如果报错日志中出现关键字"HCCL_BUFFSIZE is too SMALL, ..., NEEDED_HCCL_BUFFSIZE..., HCCL_BUFFSIZE=200MB, ..."，可通过配置环境变量 `export HCCL_BUFFSIZE=实际需要的大小` 解决。HCCL_BUFFSIZE参数介绍可[参考昇腾资料](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/maintenref/envvar/envref_07_0080.html)中的详细描述。
+- **HCCL_BUFFSIZE不足问题**：如果报错日志中出现关键字"HCCL_BUFFSIZE is too SMALL, ..., NEEDED_HCCL_BUFFSIZE..., HCCL_BUFFSIZE=200MB, ..."，可通过配置环境变量 `export HCCL_BUFFSIZE=实际需要的大小` 解决，所有Rank上的该环境变量需保持一致。HCCL_BUFFSIZE参数介绍可[参考昇腾资料](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/maintenref/envvar/envref_07_0080.html)中的详细描述。
