@@ -1085,7 +1085,6 @@ class DeepseekIndexerAttention(nn.Module):
                 torch_npu.npu_scatter_nd_update_(nope_cache.view(-1, nope_cache.shape[-1]),
                                              slot_mapping.view(-1, 1),
                                              latent_cache.view(-1, latent_cache.shape[-1]))
-                c8_input_dict.update({'pertoken_scale': dequant_q_norm})
             else:
                 k_nope = latent_cache.view(-1, latent_cache.shape[-1])[:, : nope_cache.shape[-1]]
                 k_pe = latent_cache.view(-1, latent_cache.shape[-1])[:, nope_cache.shape[-1]:]
@@ -1095,6 +1094,9 @@ class DeepseekIndexerAttention(nn.Module):
                 torch_npu.npu_scatter_nd_update_(rope_cache.view(-1, self.qk_rope_head_dim),
                                                 slot_mapping.view(-1, 1),
                                                 k_pe.view(-1, k_pe.shape[-1]))
+        if self.kv_cache_c8:
+            c8_input_dict.update({'pertoken_scale': dequant_q_norm})
+        
         k_nope = nope_cache
         k_pe = rope_cache
 
