@@ -846,7 +846,6 @@ class DeepseekIndexerAttention(nn.Module):
         actual_seq_lengths_kv: torch.Tensor = None,
         actual_seq_lengths_q: torch.Tensor = None,
         cos_sin: torch.Tensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         past_key_values_indexer: Optional[Cache] = None,
@@ -876,7 +875,6 @@ class DeepseekIndexerAttention(nn.Module):
             "past_key_values_indexer": past_key_values_indexer,
             "past_key_scales_indexer": past_key_scales_indexer,
             "actual_seq_lengths_kv": actual_seq_lengths_kv,
-            "attention_mask": attention_mask,
             "is_prefill": is_prefill,
             "slot_mapping": slot_mapping
         }
@@ -894,7 +892,6 @@ class DeepseekIndexerAttention(nn.Module):
         actual_seq_lengths_kv: torch.Tensor = None,
         actual_seq_lengths_q: torch.Tensor = None,
         cos_sin: torch.Tensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         past_key_values_indexer: Optional[Cache] = None,
@@ -914,7 +911,6 @@ class DeepseekIndexerAttention(nn.Module):
             past_key_scales_indexer=past_key_scales_indexer,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
             actual_seq_lengths_q=actual_seq_lengths_q,
-            attention_mask=attention_mask,
             is_prefill=is_prefill,
             slot_mapping=slot_mapping
         )
@@ -927,7 +923,6 @@ class DeepseekIndexerAttention(nn.Module):
             query_states=query_states, key_states=key_states,
             actual_seq_qlen=actual_seq_qlen,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
-            attention_mask=attention_mask,
             past_key_value=past_key_value,
             topk_indices=topk_indices,
             is_prefill=is_prefill
@@ -942,7 +937,6 @@ class DeepseekIndexerAttention(nn.Module):
         kv_len: torch.IntTensor = None,
         actual_seq_lengths_kv: torch.Tensor = None,
         cos_sin: torch.Tensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         past_key_values_indexer: Optional[Cache] = None,
@@ -962,7 +956,6 @@ class DeepseekIndexerAttention(nn.Module):
             past_key_values_indexer=past_key_values_indexer,
             past_key_scales_indexer=past_key_scales_indexer,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
-            attention_mask=attention_mask,
             is_prefill=is_prefill,
             cp_input_dict=cp_input_dict,
             slot_mapping=slot_mapping
@@ -975,13 +968,11 @@ class DeepseekIndexerAttention(nn.Module):
         topk_indices_prev, topk_indices_next = topk_indices
         query_states_prev = q_nope_prev, q_rope_prev
         query_states_next = q_nope_next, q_rope_next
-        attention_mask_prev, attention_mask_next = None, None
         # query_states: [B,S,N,D], K: [B,S,1,D]
         attn_output_prev = self.attn_func(
             query_states=query_states_prev, key_states=key_states,
             actual_seq_qlen=cp_input_dict["actual_seq_q"],
             actual_seq_lengths_kv=cp_input_dict["kv_len_prev"],
-            attention_mask=attention_mask_prev,
             past_key_value=past_key_value,
             topk_indices=topk_indices_prev,
             is_prefill=is_prefill
@@ -990,7 +981,6 @@ class DeepseekIndexerAttention(nn.Module):
             query_states=query_states_next, key_states=key_states,
             actual_seq_qlen=cp_input_dict["actual_seq_q"],
             actual_seq_lengths_kv=cp_input_dict["kv_len_next"],
-            attention_mask=attention_mask_next,
             past_key_value=past_key_value,
             topk_indices=topk_indices_next,
             is_prefill=is_prefill
@@ -1173,7 +1163,6 @@ class DeepseekIndexerAttention(nn.Module):
         past_key_scales_indexer: Optional[Cache] = None,
         actual_seq_lengths_kv: Optional[torch.Tensor] = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         is_prefill: bool = True,
         slot_mapping: Optional[torch.Tensor] = None,
         cp_input_dict: Optional[Dict] = None,
@@ -1206,58 +1195,15 @@ class DeepseekIndexerAttention(nn.Module):
         topk_indices = self.indexer(hidden_states, qr, actual_seq_lengths_kv, kv_len, cos_sin, position_ids, \
                                     query_states, key_states, \
                                     past_key_values_indexer, past_key_scales_indexer, \
-                                    attention_mask, slot_mapping, block_table, \
+                                    slot_mapping, block_table, \
                                     actual_seq_lengths_q, cp_input_dict, c8_input_dict,
                                     is_prefill)
 
         return query_states, key_states, topk_indices
 
-    def apply_attention_npu(
-        self,
-        query_states, key_states, topk_indices,
-        attention_mask: Optional[torch.Tensor] = None,
-        actual_seq_qlen: torch.Tensor = None,
-        actual_seq_lengths_kv: torch.Tensor = None,
-        **kwargs
-    ):
-        bsz = actual_seq_lengths_kv.shape[0]
-        query_states = torch.cat([query_states[0], query_states[1]], dim=-1).view(
-            bsz, -1, self.num_heads_per_rank, (self.kv_lora_rank + self.qk_rope_head_dim)
-        ).transpose(1, 2)
-        key_states = torch.cat([key_states[0], key_states[1]], dim=-1).view(
-            bsz, 1, -1, (self.kv_lora_rank + self.qk_rope_head_dim)
-        )
-
-        attn_weights = (
-            torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
-        )
-        assert attention_mask is not None
-
-        topk_indices = topk_indices.unsqueeze(1)
-        index_mask = torch.full_like(attention_mask, fill_value=torch.finfo(attention_mask.dtype).min, \
-                                     dtype=attention_mask.dtype).scatter_(-1, topk_indices, 0)
-        index_mask += attention_mask
-
-        if attention_mask is not None:
-            attn_weights = attn_weights + index_mask
-
-        # upcast attention to fp32
-        attn_weights = nn.functional.softmax(
-            attn_weights, dim=-1, dtype=torch.float32
-        ).to(query_states.dtype)
-        value_states = key_states[..., :self.kv_lora_rank]
-        attn_output = torch.matmul(attn_weights, value_states)
-
-        # kv rank opt
-        attn_output = attn_output.transpose(1, 2).contiguous()  # (b, s, n, d)
-        attn_output = attn_output.reshape(-1, self.num_heads_per_rank, self.kv_lora_rank)
-        attn_output = attn_output.transpose(0, 1)
-        return attn_output
-    
     def apply_attention_fusion(
         self,
         query_states, key_states, topk_indices,
-        attention_mask: Optional[torch.Tensor] = None,
         actual_seq_qlen: torch.Tensor = None,
         actual_seq_lengths_kv: torch.Tensor = None,
         past_key_value: Optional[Cache] = None,
@@ -1350,7 +1296,6 @@ class DeepseekV3DecoderLayer(nn.Module):
         cos_sin: torch.Tensor,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
         past_residual: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         past_key_values_indexer: Optional[Tuple[torch.Tensor]] = None,
@@ -1370,7 +1315,6 @@ class DeepseekV3DecoderLayer(nn.Module):
             actual_seq_lengths_kv=actual_seq_lengths_kv,
             cos_sin=cos_sin,
             actual_seq_lengths_q=actual_seq_lengths_q,
-            attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
             past_key_values_indexer=past_key_values_indexer,
@@ -1508,7 +1452,6 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         kv_len: torch.IntTensor = None,
         actual_seq_lengths_kv: list = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         past_key_values_indexer: Optional[List[torch.FloatTensor]] = None,
@@ -1553,7 +1496,6 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
                     cos_sin=cos_sin,
                     actual_seq_lengths_q=actual_seq_lengths_q,
                     past_residual=residual,
-                    attention_mask=attention_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
                     past_key_values_indexer=past_key_values_indexer,
@@ -1588,7 +1530,6 @@ class DeepseekV3ModelMTPLayer(DeepseekV3Model):
         cos_sin: torch.Tensor,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
         past_residual: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         past_key_values_indexer: Optional[List[torch.Tensor]] = None,
@@ -1607,7 +1548,6 @@ class DeepseekV3ModelMTPLayer(DeepseekV3Model):
             cos_sin=cos_sin,
             actual_seq_lengths_q=actual_seq_lengths_q,
             past_residual=past_residual,
-            attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
             past_key_values_indexer=past_key_values_indexer,
@@ -1930,7 +1870,6 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         kv_len: torch.IntTensor = None,
         actual_seq_lengths_kv: list = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         past_key_values_indexer: Optional[List[torch.FloatTensor]] = None,
@@ -1950,7 +1889,6 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             kv_len=kv_len,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
             actual_seq_lengths_q=actual_seq_lengths_q,
-            attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             past_key_values_indexer=past_key_values_indexer,
@@ -2175,7 +2113,6 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                 [seq_len for _ in range(batch_size)], device=kv_len.device, dtype=kv_len.dtype)
             actual_seq_lengths_kv = self.get_actual_seq_lengths(kv_len_withpad)
         else:
-            attention_mask = None
             actual_seq_lengths_kv = self.get_actual_seq_lengths(kv_len, seq_len, is_prefill)
             position_ids = kv_len.view(-1, seq_len) - 1
 
@@ -2195,7 +2132,6 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             "past_key_values": past_key_values,
             "past_key_values_indexer": past_key_values_indexer,
             "past_key_scales_indexer": past_key_scales_indexer,
-            "attention_mask": attention_mask,
             "kv_len": kv_len,
             "actual_seq_lengths_kv": actual_seq_lengths_kv,
             "actual_seq_lengths_q": actual_seq_lengths_q,
@@ -2332,7 +2268,6 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
         actual_seq_lengths_kv: list = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
         prev_hidden_states: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         past_key_values_indexer: Optional[List[torch.Tensor]] = None,
@@ -2378,7 +2313,6 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
             actual_seq_lengths_q=actual_seq_lengths_q,
             cos_sin=cos_sin,
             past_residual=residual,
-            attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_values,
             past_key_values_indexer=past_key_values_indexer,

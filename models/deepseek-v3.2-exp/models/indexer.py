@@ -37,10 +37,6 @@ import custom_ops
 
 from executor.utils import npu_stream_switch, get_had_pow2
 from module.linear import ReplicatedLinear
-from .modules import (_prepare_4d_causal_attention_mask, one_hot, yarn_get_mscale,
-                      DeepseekV3RMSNorm, apply_rotary_pos_emb, _init_rope, DEEPSEEKV3_START_DOCSTRING,
-                      DEEPSEEKV3_INPUTS_DOCSTRING, DeepseekV3PreTrainedModel
-                    )
 
 
 class LayerNorm(nn.Module):
@@ -121,7 +117,6 @@ class Indexer(nn.Module):
         key_states: torch.Tensor,
         past_key_values_indexer: Optional[List[torch.FloatTensor]],
         past_key_scales_indexer: Optional[List[torch.FloatTensor]],
-        mask: Optional[torch.Tensor],
         slot_mapping: torch.Tensor,
         block_table: Optional[torch.Tensor] = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
@@ -140,7 +135,6 @@ class Indexer(nn.Module):
             "key_states": key_states,
             "past_key_values_indexer": past_key_values_indexer,
             "past_key_scales_indexer": past_key_scales_indexer,
-            "mask": mask,
             "slot_mapping": slot_mapping,
             "block_table": block_table,
             "actual_seq_lengths_q": actual_seq_lengths_q,
@@ -171,7 +165,6 @@ class Indexer(nn.Module):
         key_states: torch.Tensor,
         past_key_values_indexer: Optional[List[torch.FloatTensor]],
         past_key_scales_indexer: Optional[List[torch.FloatTensor]],
-        mask: Optional[torch.Tensor],
         slot_mapping: torch.Tensor,
         block_table: Optional[torch.Tensor] = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
@@ -239,7 +232,6 @@ class Indexer(nn.Module):
         key_states: torch.Tensor,
         past_key_values_indexer: Optional[List[torch.FloatTensor]],
         past_key_scales_indexer: Optional[List[torch.FloatTensor]],
-        mask: Optional[torch.Tensor],
         slot_mapping: torch.Tensor,
         block_table: Optional[torch.Tensor] = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
