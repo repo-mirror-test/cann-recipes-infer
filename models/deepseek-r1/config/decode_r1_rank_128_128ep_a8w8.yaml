@@ -1,5 +1,5 @@
 model_name: "deepseek_r1"
-model_path: "/data/models/origin/DeepSeek-R1-w8a8-vllm-fusion/"
+model_path: "/data/models/origin/DeepSeek-R1-W8A8"
 exe_mode: "ge_graph"               # ["ge_graph", "acl_graph", "eager"], mode of decode
 world_size: 128
 
@@ -16,7 +16,7 @@ model_config:
   perfect_eplb: False               # [False, True]
   enable_cache_compile: False       # [False, True]
   enable_prefill_multi_cycle: True  # [False, True]
-  enable_superkernel: False         # [False, True]
+  enable_superkernel: True         # [False, True]
   enable_online_split_weight: True   # [False, True]
   moe_chunk_max_len: 65536
 

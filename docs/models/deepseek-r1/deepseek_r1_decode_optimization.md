@@ -43,7 +43,17 @@ export HCCL_OP_EXPANSION_MODE=AIV
 ```
 
 ### SuperKernel优化
-SuperKernel优化功能正在开发中，即将支持。该功能在decode启用`ge_graph`图模式的场景下，根据用户定义的范围对模型的计算图进行优化。SuperKernel技术的详细介绍，请参考[官方文档](https://www.hiascend.com/document/detail/zh/Pytorch/710/modthirdparty/torchairuseguide/torchair_00035.html)。SuperKernel优化功能将通过`enable_superkernel`开关使能，可将所有的decode layers优化在一个SuperKernel scope内，从而实现对任务调度的等待时间和调度开销的优化，提升整体性能。
+在decode使能`ge_graph`图模式的场景下，支持对模型的计算图按照用户定义的范围，进行SuperKernel优化。SuperKernel技术的详细介绍，请参考[官方文档](https://www.hiascend.com/document/detail/zh/Pytorch/710/modthirdparty/torchairuseguide/torchair_00035.html)。在本示例中，可通过`enable_superkernel`开关使能，支持将所有的decode layers优化在一个SuperKernel scope内，实现对任务调度的等待时间和调度开销的优化，提升整体性能。如希望修改SuperKernel scope的范围，可以在`modeling_deepseek.py`中调整，示例如下：
+```python
+from executor.utils import superkernel_scope
+
+switch = enable_superkernel
+scope = f"scope_name"
+options = f"scope_options"
+with superkernel_scope(switch, scope, options):
+    your modules
+```
+其中`scope`表示当前融合范围的SuperKernel名称，`options`表示SuperKernel编译的自定义选项。关于scope和options的具体描述和使用范围请参考[SuperKernel文档](https://www.hiascend.com/document/detail/zh/Pytorch/710/modthirdparty/torchairuseguide/torchair_00035.html)。
 
 ---
 ## 附录

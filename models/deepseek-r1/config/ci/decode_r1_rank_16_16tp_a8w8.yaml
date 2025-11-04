@@ -1,5 +1,5 @@
 model_name: "deepseek_r1"
-model_path: "/data/models/origin/DeepSeek-R1-w8a8-vllm-fusion/"
+model_path: "/data/models/origin/DeepSeek-R1-W8A8"
 exe_mode: "ge_graph"                # ["ge_graph", "acl_graph", "eager"], mode of decode
 world_size: 16
 

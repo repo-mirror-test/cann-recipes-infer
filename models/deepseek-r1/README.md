@@ -10,15 +10,14 @@ DeepSeek-R1和Kimi-K2都是2025年开源的大语言模型，二者结构类似�
 
 1. 安装CANN软件包。
 
-   本样例的编译执行依赖CANN开发套件包（cann-toolkit）与CANN二进制算子包（cann-kernels），支持的CANN软件版本为`CANN 8.3.RC1.alpha002`。
+   本样例的编译执行依赖CANN开发套件包（cann-toolkit）与CANN二进制算子包（cann-kernels），支持的CANN软件版本为`CANN 8.3.RC1.alpha003`。
 
-   请从[软件包下载地址](https://www.hiascend.com/developer/download/community/result?module=cann&cann=8.3.RC1.alpha002)下载`Ascend-cann-toolkit_${version}_linux-${arch}.run`与`Ascend-cann-kernels-${chip_type}_${version}_linux-${arch}.run`软件包，并参考[CANN安装文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0001.html?Mode=PmIns&OS=Debian&Software=cannToolKit)进行安装。
+   请从[软件包下载地址](https://www.hiascend.com/developer/download/community/result?module=cann&cann=8.3.RC1.alpha003)下载`Ascend-cann-toolkit_${version}_linux-${arch}.run`与`Atlas-A3-cann-kernels_${version}_linux-${arch}.run`软件包，并参考[CANN安装文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/softwareinst/instg/instg_0001.html?Mode=PmIns&OS=Debian&Software=cannToolKit)进行安装。
 
 2. 安装Ascend Extension for PyTorch（torch_npu）。
 
-   Ascend Extension for PyTorch（torch_npu）为支撑PyTorch框架运行在NPU上的适配插件，本样例支持的Ascend Extension for PyTorch版本为`7.2.RC1.alpha002`，PyTorch版本为`2.6.0`。
-
-   请从[软件包下载地址](https://gitee.com/ascend/pytorch/tree/v7.2.RC1.alpha002-pytorch2.6.0)下载`v7.2.RC1.alpha002-pytorch2.6.0`源码，参考[源码编译安装](https://www.hiascend.com/document/detail/zh/Pytorch/710/configandinstg/instg/insg_0005.html)。
+   Ascend Extension for PyTorch（torch_npu）为支撑PyTorch框架运行在NPU上的适配插件，本样例支持的Ascend Extension for PyTorch版本为`7.2.RC1.alpha003`，PyTorch版本为`2.6.0`。
+   请从[软件包下载地址](https://gitcode.com/Ascend/pytorch/tags/v7.2.RC1.alpha003-pytorch2.6.0)下载`v7.2.RC1.alpha003-pytorch2.6.0`源码，参考[源码编译安装](https://www.hiascend.com/document/detail/zh/Pytorch/710/configandinstg/instg/insg_0005.html)。
 
 3. 下载项目源码并安装依赖的python库。
     ```bash
@@ -48,7 +47,24 @@ Deepseek-R1与Kimi-K2的原始权重下载地址如下：
 - [Deepseek-R1权重](https://huggingface.co/deepseek-ai/DeepSeek-R1/tree/main)
 - [Kimi-K2权重](https://huggingface.co/moonshotai/Kimi-K2-Instruct/tree/main)
 
-> 注意：原始权重为fp8格式，本推理脚本仅支持bfloat16/int8格式，可自行转换。
+## 权重转换
+在各个节点上使用`weight_convert.sh` 脚本完成fp8到bfloat16/int8权重转换。
+
+  >入参介绍：`input_fp8_hf_path`：原始fp8权重路径；`output_hf_path`：转换后输出的权重路径；`quant_mode`：量化模式
+
+  权重转换拉起示例：
+  ```
+  # 转换为bfloat16权重，适用于DeepSeek-R1和Kimi-K2。
+  bash utils/weight_convert.sh --input_fp8_hf_path /data/models/origin/DeepSeek-R1-FP8 --output_hf_path /data/models/origin/DeepSeek-R1-Bfloat16 --quant_mode bfloat16
+
+  # 转换为W8A8C16权重，适用于DeepSeek-R1和Kimi-K2。
+  bash utils/weight_convert.sh --input_fp8_hf_path /data/models/origin/DeepSeek-R1-FP8 --output_hf_path /data/models/origin/DeepSeek-R1-W8A8C16 --quant_mode w8a8c16
+
+  # 转换为W8A8C8权重，仅适用于DeepSeek-R1。
+  bash utils/weight_convert.sh --input_fp8_hf_path /data/models/origin/DeepSeek-R1-FP8 --output_hf_path /data/models/origin/DeepSeek-R1-W8A8C8 --quant_mode w8a8c8
+  ```
+  > 注意：仅DeepSeek-R1支持转W8A8C8权重。
+
 
 ## 推理执行
 
@@ -56,11 +72,11 @@ Deepseek-R1与Kimi-K2的原始权重下载地址如下：
 
    - 修改YAML文件中`model_path`参数。
 
-     在`models/deepseek-r1/config`目录下已提供了较优性能的YAML样例供您参考，您可以根据模型类型、集群规模以及量化类型选择对应的YAML文件，本文以`models/deepseek-r1/config/decode_r1_rank_16_16tp_a8w8.yaml`文件为例，修改其中的`model_path`参数，将其设置为[权重准备](#权重准备)阶段准备好的权重文件存储路径，例如`/data/models/origin/DeepSeek-R1-w8a8-vllm-fusion/`。
+     在`models/deepseek-r1/config`目录下已提供了较优性能的YAML样例供您参考，您可以根据模型类型、集群规模以及量化类型选择对应的YAML文件，本文以`models/deepseek-r1/config/decode_r1_rank_16_16ep_a8w8.yaml`文件为例，修改其中的`model_path`参数，将其设置为[权重转换](#权重转换)阶段准备好的权重文件存储路径，例如`/data/models/origin/DeepSeek-R1-W8A8`。
 
    - 修改`models/deepseek-r1/infer.sh`脚本中`YAML_FILE_NAME`参数。
 
-     将`YAML_FILE_NAME`设置为`config`文件夹下YAML文件名称，例如`decode_r1_rank_16_16tp_a8w8.yaml`。
+     将`YAML_FILE_NAME`设置为`config`文件夹下YAML文件名称，例如`decode_r1_rank_16_16ep_a8w8.yaml`。
 
 2. 准备输入prompt。
 

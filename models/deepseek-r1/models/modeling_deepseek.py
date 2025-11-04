@@ -691,6 +691,7 @@ class DeepseekV3Attention(nn.Module):
         self.config = config
         self.runner_settings = runner_settings
         self.mm_quant_mode = runner_settings.get("model_config").get("mm_quant_mode", "A16W16")
+        self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
         self.batch_size = self.runner_settings.get("data_config").get("batch_size", 16)
         self.batch_size_per_rank = self.runner_settings.get("data_config").get("batch_size_per_rank", 1)
         self.attn_tp_size = self.runner_settings.get("parallel_config").get("attn_tp_size", 1)
@@ -831,8 +832,9 @@ class DeepseekV3Attention(nn.Module):
             and self.enable_pa
             and self.enable_weight_nz
         )
-        self.use_faquant = False
-        self.kv_scale = None
+        if self.kv_cache_c8:
+            self.ckv_scale = nn.Parameter(torch.rand(1, dtype=torch.float), requires_grad=False)
+            self.ckv_scale_reci = None
         self.enable_aclgraph = runner_settings.get("exe_mode", "eager") == "acl_graph"
         self.enable_gegraph = runner_settings.get("exe_mode", "eager") == "ge_graph"
         self.fa_ops = torch.ops.npu
@@ -974,7 +976,6 @@ class DeepseekV3Attention(nn.Module):
             dist.all_reduce(attn_output, group=self.hccl_comm_dict.get("attn_tp_group", None))
         return attn_output
 
-
     def forward_page_attention_normal(
         self,
         hidden_states: torch.Tensor,
@@ -1034,6 +1035,10 @@ class DeepseekV3Attention(nn.Module):
         # prefill stage needs to view shapes as the following.
         cos = cos.view(-1, 1, 1, self.qk_rope_head_dim)
         sin = sin.view(-1, 1, 1, self.qk_rope_head_dim)
+
+        if self.kv_cache_c8:
+            self.ckv_scale_reci = torch.reciprocal(self.ckv_scale).repeat(self.kv_lora_rank).view(1, -1) \
+                .to(hidden_states.device)
         _, _, k_rope, k_nope = torch_npu.npu_kv_rmsnorm_rope_cache(
             latent_cache,
             self.kv_a_layernorm.weight,
@@ -1042,6 +1047,7 @@ class DeepseekV3Attention(nn.Module):
             slot_mapping,
             rope_cache,
             nope_cache,
+            c_kv_scale=self.ckv_scale_reci if self.kv_cache_c8 else None,
             epsilon=self.kv_a_layernorm.variance_epsilon,
             cache_mode="PA_NZ",
             is_output_kv=True
@@ -1221,14 +1227,14 @@ class DeepseekV3Attention(nn.Module):
         rope_cache = past_key_value[self.layer_idx][1].unsqueeze(2)
         block_num, block_size, key_head_num, cache_dim = nope_cache.size()
 
-        enable_quant = self.mm_quant_mode == "A8W8"
-        if enable_quant:
+        enable_mm_quant_a8w8 = self.mm_quant_mode == "A8W8"
+        if enable_mm_quant_a8w8:
             hidden_states_int8, pertoken_scale = torch_npu.npu_dynamic_quant(hidden_states.flatten(0, 1))
             hidden_states_int8 = hidden_states_int8.view(bsz, q_len, -1)
             pertoken_scale = pertoken_scale.view(-1, 1)
 
         q_nope, q_pe, k_nope, k_rope, dequant_scale_q_nope = torch.ops.npu.npu_mla_prolog_v2(
-            token_x=hidden_states_int8 if enable_quant else hidden_states,
+            token_x=hidden_states_int8 if enable_mm_quant_a8w8 else hidden_states,
             weight_dq=self.q_a_proj.weight, weight_uq_qr=self.q_b_proj.weight,
             weight_uk=self.kv_b_proj_w_k, weight_dkv_kr=self.kv_a_proj_with_mqa.weight,
             rmsnorm_gamma_cq=self.q_a_layernorm.weight,
@@ -1237,12 +1243,11 @@ class DeepseekV3Attention(nn.Module):
             cache_index=cache_index,
             kv_cache=nope_cache,
             kr_cache=rope_cache,
-            dequant_scale_x=pertoken_scale if enable_quant else None,
-            dequant_scale_w_dq=self.q_a_proj.weight_scale.view(1, -1) if enable_quant else None,
-            dequant_scale_w_uq_qr=self.q_b_proj.weight_scale.view(1, -1) if enable_quant else None,
-            dequant_scale_w_dkv_kr=self.kv_a_proj_with_mqa.weight_scale.view(1, -1) if enable_quant else None,
-            quant_scale_ckv=torch.reciprocal(self.kv_scale).repeat(self.kv_lora_rank).view(1, -1) \
-                if self.use_faquant else None,
+            dequant_scale_x=pertoken_scale if enable_mm_quant_a8w8 else None,
+            dequant_scale_w_dq=self.q_a_proj.weight_scale.view(1, -1) if enable_mm_quant_a8w8 else None,
+            dequant_scale_w_uq_qr=self.q_b_proj.weight_scale.view(1, -1) if enable_mm_quant_a8w8 else None,
+            dequant_scale_w_dkv_kr=self.kv_a_proj_with_mqa.weight_scale.view(1, -1) if enable_mm_quant_a8w8 else None,
+            quant_scale_ckv=self.ckv_scale_reci if self.kv_cache_c8 else None,
             quant_scale_ckr=None,
             smooth_scales_cq=None,
             rmsnorm_epsilon_cq=self.q_a_layernorm.variance_epsilon,
@@ -1251,8 +1256,8 @@ class DeepseekV3Attention(nn.Module):
         )
 
         # adapter nz
-        factor = 2 if self.use_faquant else 1
-        KV_CACHE_NZ_DIM = 16  # bf16 dtype is 16 for nz format, avoid dynamic shape in high torch version
+        factor = 2 if self.kv_cache_c8 else 1
+        KV_CACHE_NZ_DIM = 16 # bf16 dtype is 16 for nz format, avoid dynamic shape in high torch version
         k_nope = k_nope.view(block_num, 1, self.kv_lora_rank // (KV_CACHE_NZ_DIM * factor),
                              block_size, KV_CACHE_NZ_DIM * factor)
         k_rope = k_rope.view(block_num, 1, self.qk_rope_head_dim // KV_CACHE_NZ_DIM,
@@ -1264,19 +1269,24 @@ class DeepseekV3Attention(nn.Module):
             sparse_mode = 0
             attention_mask = None
 
-        attn_output, _ = self.fa_ops.npu_fused_infer_attention_score(
+        dequant_scale_query = dequant_scale_q_nope.view(bsz, q_len, -1) if self.kv_cache_c8 else None
+        attn_output, _ = self.fa_ops.npu_fused_infer_attention_score_v2(
             q_nope, k_nope, k_nope,
             query_rope=q_pe, key_rope=k_rope,
-            num_heads=self.num_heads_per_rank,
-            num_key_value_heads=self.num_key_value_heads_per_rank,
-            input_layout="BSND_NBSD",
-            block_table=self.block_table,
-            block_size=self.block_size,
             atten_mask=attention_mask,
-            actual_seq_lengths_kv=actual_seq_lengths_kv,
-            scale=self.softmax_scale,
-            antiquant_mode=0, antiquant_scale=None,
-            sparse_mode=sparse_mode
+            actual_seq_kvlen=actual_seq_lengths_kv,
+            block_table=self.block_table,
+            dequant_scale_query=dequant_scale_query,
+            dequant_scale_key=self.ckv_scale if self.kv_cache_c8 else None,
+            dequant_scale_value=self.ckv_scale if self.kv_cache_c8 else None,
+            num_query_heads=self.num_heads_per_rank,
+            num_key_value_heads=self.num_key_value_heads_per_rank,
+            softmax_scale=self.softmax_scale,
+            input_layout="BSND_NBSD",
+            sparse_mode=sparse_mode,
+            block_size=self.block_size,
+            query_quant_mode=3 if self.kv_cache_c8 else 0,
+            key_quant_mode=0, value_quant_mode=0,
         )
         attn_output = attn_output.view(self.num_heads_per_rank, -1, self.kv_lora_rank)
         attn_output = torch_npu.npu_transpose_batchmatmul(
@@ -2059,6 +2069,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         self.config = config
         self.runner_settings = runner_settings
         self.input_max_len = int(os.getenv("INPUT_MAX_LEN", 1024))
+        self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
         self.get_parallel_settings()
         self.experts_per_rank = config.n_routed_experts // self.moe_ep_size
         self.top_k = config.num_experts_per_tok
@@ -2326,7 +2337,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
     ):
         batch_size, seq_len = input_ids.size()
         cache_seq_len = self.max_position_embeddings
-        dtype = self.config.torch_dtype
+        dtype_nope = torch.int8 if self.kv_cache_c8 else self.config.torch_dtype
+        dtype_rope = self.config.torch_dtype
 
         past_key_values = ()
 
@@ -2345,8 +2357,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                         )
 
             for _ in range(num_hidden_layers):
-                cache_nope = torch.zeros(cache_nope_shape, dtype=dtype, device=input_ids.device)
-                cache_rope = torch.zeros(cache_rope_shape, dtype=dtype, device=input_ids.device)
+                cache_nope = torch.zeros(cache_nope_shape, dtype=dtype_nope, device=input_ids.device)
+                cache_rope = torch.zeros(cache_rope_shape, dtype=dtype_rope, device=input_ids.device)
                 past_key_values += ((cache_nope, cache_rope),)
         else:
             cache_key_shape = (
@@ -2357,7 +2369,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                         )
 
             for _ in range(num_hidden_layers):
-                key_cache = torch.zeros(cache_key_shape, dtype=dtype, device=input_ids.device)
+                key_cache = torch.zeros(cache_key_shape, dtype=dtype_nope, device=input_ids.device)
                 past_key_values += ((key_cache, ),)
 
         return past_key_values

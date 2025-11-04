@@ -163,10 +163,10 @@ class ModelRunner:
                 ignore_mismatched_sizes=True,
                 runner_settings=self.runner_settings
             )
-        self.check_model_cfg()
         self._verify_quantization()
         if self.quantization is not None:
             self.hf_config.quant_config = get_quant_config(self.hf_config, self.quantization, self.model_path)
+        self.check_model_cfg()
         self.model = loader.load_model(config=self.hf_config, model_cls=model,
                                        runner_settings=self.runner_settings, model_path=self.model_path)
 
