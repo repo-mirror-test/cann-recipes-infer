@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 vendor_name=customize_ops
-targetdir=/usr/local/Ascend/opp
+targetdir=/usr/local/Ascend/ascend-toolkit/opp
 target_custom=0
 
 sourcedir=$PWD/packages
@@ -54,14 +54,14 @@ if [ -n "${INSTALL_PATH}" ]; then
         fi
     fi
     targetdir=${INSTALL_PATH}
-elif [ -n "${ASCEND_CUSTOM_OPP_PATH}" ]; then
-    if [ ! -d ${ASCEND_CUSTOM_OPP_PATH} ]; then
-        mkdir -p ${ASCEND_CUSTOM_OPP_PATH} >> /dev/null 2>&1
+elif [ -n "${ASCEND_CUSTOM_PYPTO_PATH}" ]; then
+    if [ ! -d ${ASCEND_CUSTOM_PYPTO_PATH} ]; then
+        mkdir -p ${ASCEND_CUSTOM_PYPTO_PATH} >> /dev/null 2>&1
         if [ $? -ne 0 ]; then
-            log "[ERROR] create ${ASCEND_CUSTOM_OPP_PATH}  failed"
+            log "[ERROR] create ${ASCEND_CUSTOM_PYPTO_PATH}  failed"
         fi
     fi
-    targetdir=${ASCEND_CUSTOM_OPP_PATH}
+    targetdir=${ASCEND_CUSTOM_PYPTO_PATH}
 else
     if [ "x${ASCEND_OPP_PATH}" == "x" ]; then
         log "[ERROR] env ASCEND_OPP_PATH no exist"
@@ -79,7 +79,7 @@ if [ ! -x $targetdir ] || [ ! -w $targetdir ] || [ ! -r $targetdir ];then
     log "[WARNING] The directory $targetdir does not have sufficient permissions. \
     Please check and modify the folder permissions (e.g., using chmod), \
     or use the --install-path option to specify an installation path and \
-    change the environment variable ASCEND_CUSTOM_OPP_PATH to the specified path."
+    change the environment variable ASCEND_CUSTOM_PYPTO_PATH to the specified path."
 fi
 
 upgrade()
@@ -274,9 +274,9 @@ fi
 
 # set the set_env.bash
 if [ -n "${INSTALL_PATH}" ] && [ -d ${INSTALL_PATH} ]; then
-    _ASCEND_CUSTOM_OPP_PATH=${targetdir}/${vendordir}
-    bin_path="${_ASCEND_CUSTOM_OPP_PATH}/bin"
-    set_env_variable="#!/bin/bash\nexport ASCEND_CUSTOM_OPP_PATH=${_ASCEND_CUSTOM_OPP_PATH}:\${ASCEND_CUSTOM_OPP_PATH}\nexport LD_LIBRARY_PATH=${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib/:\${LD_LIBRARY_PATH}"
+    _ASCEND_CUSTOM_PYPTO_PATH=${targetdir}/${vendordir}
+    bin_path="${_ASCEND_CUSTOM_PYPTO_PATH}/bin"
+    set_env_variable="#!/bin/bash\nexport ASCEND_CUSTOM_PYPTO_PATH=${_ASCEND_CUSTOM_PYPTO_PATH}/:\${ASCEND_CUSTOM_PYPTO_PATH}\nexport LD_LIBRARY_PATH=${_ASCEND_CUSTOM_PYPTO_PATH}/op_api/lib/:\${LD_LIBRARY_PATH}"
     if [ ! -d ${bin_path} ]; then
         mkdir -p ${bin_path} >> /dev/null 2>&1
         if [ $? -ne 0 ]; then
@@ -286,14 +286,11 @@ if [ -n "${INSTALL_PATH}" ] && [ -d ${INSTALL_PATH} ]; then
     fi
     echo -e ${set_env_variable} > ${bin_path}/set_env.bash
     if [ $? -ne 0 ]; then
-        log "[ERROR] write ASCEND_CUSTOM_OPP_PATH to set_env.bash failed"
+        log "[ERROR] write ASCEND_CUSTOM_PYPTO_PATH to set_env.bash failed"
         exit 1
-    else
-        log "[INFO] using requirements: when custom module install finished or before you run the custom module, \
-        execute the command [ source ${bin_path}/set_env.bash ] to set the environment path"
     fi
 else
-    _ASCEND_CUSTOM_OPP_PATH=${targetdir}/${vendordir}
+    _ASCEND_CUSTOM_PYPTO_PATH=${targetdir}/${vendordir}
     config_file=${targetdir}/vendors/config.ini
     if [ ! -f ${config_file} ]; then
         touch ${config_file}
@@ -311,8 +308,6 @@ else
             sed -i "/load_priority=$found_vendors/s@load_priority=$found_vendors@load_priority=$vendor_name,$vendor@g" "$config_file"
         fi
     fi
-    log "[INFO] using requirements: when custom module install finished or before you run the custom module, \
-        execute the command [ export LD_LIBRARY_PATH=${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib/:\${LD_LIBRARY_PATH} ] to set the environment path"
 fi
 
 if [ -d ${targetdir}/$vendordir/op_impl/cpu/aicpu_kernel/impl/ ]; then

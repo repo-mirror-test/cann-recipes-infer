@@ -1,4 +1,5 @@
 ## 概述
+
 此项目是基于昇腾硬件Atlas A3的融合算子库，当前项目中包括[DeepseekIndexerAttention](./docs/deepseek_indexer_attention.md) 、[LightningIndexer](./docs/lightning_indexer.md)和[LightningIndexerProlog](./docs/lightning_indexer_prolog.md)三个算子。
 
 ## 目录结构
@@ -47,25 +48,29 @@
 
 ```
 
-## 环境准备
+## 环境准备<a name="1"></a>
 ###  硬件要求
+
 产品型号：Atlas A3 系列
 
 操作系统：Linux ARM
 
-镜像版本：cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_pypto_aarch_image:v0.1
+镜像版本：cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_pypto_aarch_image:v0.1
 
 驱动版本：Ascend HDK 25.2.0
 > npu-smi info 检查Ascend NPU固件和驱动是否正确安装。如果已安装，通过命令`npu-smi info`确认版本是否为25.2.0。如果未安装或者版本不是25.2.0，请先下载[固件和驱动包](https://support.huawei.com/enterprise/zh/ascend-computing/ascend-hdk-pid-252764743/software/264360782?idAbsPath=fixnode01|23710424|251366513|254884019|261408772|252764743)，然后根据[指导](https://hiascend.com/document/redirect/CannCommunityInstSoftware)自行安装。
+
 ### 下载源码
+
   可以选择在宿主机或者容器内下载源码，如果在容器内下载，应在主机挂载在容器的目录下下载；在宿主机内下载则无此约束。 执行如下命令即可下载 cann-recipes-infer 源码。
-  ```
+  ```shell
   mkdir -p /home/code; cd /home/code/
   git clone git@gitcode.com:cann/cann-recipes-infer.git
   ```
 
 ### 获取 docker 镜像
-从[ARM镜像地址](https://ascend-cann.obs.cn-north-4.myhuaweicloud.com/cann8.3.rc1.alpha002/pt2.5.1/aarch/pypto/cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_pypto_aarch_image.tar)中下载 docker 镜像，然后上传到需要A3服务器每个节点上，并通过命令导入镜像`docker load -i cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_pypto_aarch_image.tar`
+
+从[ARM镜像地址](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_pypto_aarch_image.tar)中下载 docker 镜像，然后上传到需要A3服务器每个节点上，并通过命令导入镜像`docker load -i cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_pypto_aarch_image.tar`
 
 ### 拉起 docker 容器
 
@@ -94,7 +99,7 @@
       --net=host \
       --shm-size=128g \
       --privileged \
-      cann8.3.rc1.alpha002_pt2.5.1_dsv3.2_pypto_aarch_image:v0.1 /bin/bash
+      cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_pypto_aarch_image:v0.1 /bin/bash
   ```
   进入容器：
   ```
@@ -102,49 +107,51 @@
   ```
 
 ### 设置环境变量
+
   ```bash
-  source /usr/local/Ascend/latest/bin/setenv.bash
+  source /usr/local/Ascend/ascend-toolkit/latest/bin/setenv.bash
   ```
 
-### 依赖安装
- - python >= 3.7.0
-  - gcc >= 7.3.0
-  - cmake >= 3.16.0
-  - JSON for Modern C++（建议版本 [v3.11.3](https://github.com/nlohmann/json/releases/tag/v3.11.3)）
-
-   - 如下以[JSON for Modern C++源码](https://github.com/nlohmann/json/releases/tag/v3.11.3)编译安装为例，安装命令如下：
-
-     ```bash
-     mkdir temp && cd temp                # 在 JSON for Modern C++ 源码根目录下创建临时目录并进入
-     cmake .. -D_GLIBCXX_USE_CXX11_ABI=0 -DJSON_MultipleHeaders=ON -DJSON_BuildTests=OFF
-     make
-     make install                         # root用户安装
-      ```
-
 ## 编译执行
+
 ### 算子工程编译安装：
+
 进入pypto目录通过执行build.sh脚本编译自定义算子工程，代码发生修改后需要重新执行该步骤
 ```shell
 cd /home/code/cann-recipes-infer/ops/pypto
 bash ./build.sh
 ```
-编译完成后，在run_pkg目录下生成customize_ops_linux.<arch>.run自定义算子包，安装run包
-```shell
-cd run_pkg
-./customize_ops_linux.<arch>.run
-```
+
+**说明：**
+
+若提示如下信息，则说明编译成功。
+
+  ```
+  Self-extractable archive "customize_ops_linux.<arch>.run" successfully created.
+  ```
+
+编译完成后，在run_pkg目录下生成customize_ops_linux.<arch>.run自定义算子包。其中，\<arch>表示操作系统架构。
+
+### 算子安装
+
+  ```shell
+  cd /home/code/cann-recipes-infer/ops/pypto/run_pkg
+  ./customize_ops_linux.<arch>.run
+  ```
 
 ### whl包编译安装：
+
 在pypto/torch_ops_extension目录通过执行build_and_install.sh脚本编译安装whl包，代码发生修改后需要重新执行该步骤
 ```shell
-cd torch_ops_extension
+cd /home/code/cann-recipes-infer/ops/pypto/torch_ops_extension
 bash ./build_and_install.sh
 ```
 
 ### sample算子执行：
-在pypto/examples目录通过执行run.sh脚本执行示例算子
+
+在pypto/examples目录通过执行以下脚本执行示例算子
 ```shell
-cd examples
+cd /home/code/cann-recipes-infer/ops/pypto/examples
 python3 test_deepseek_indexer_attention.py
 python3 test_lightning_indexer_pto.py 
 python3 test_lightning_indexer_prolog.py
@@ -152,21 +159,19 @@ python3 test_lightning_indexer_prolog.py
 
 ## DeepSeek-V3.2-Exp 整网集成样例执行
 lightning_indexer_pto算子已支持集成到DeepSeek-V3.2-Exp整网，样例执行过程如下：
+
 ### 权重和数据集准备
 DeepSeek-V3.2-Exp模型和数据集准备，请参考[模型权重和数据集准备](../../models/deepseek-v3.2-exp/README.md)中相关章节
+
 ### 代码修改适配
 网络执行前需对配置做一些调整，参考[修改代码](../../models/deepseek-v3.2-exp/README.md)章节进行适配
+
 ### 修改网络配置和环境配置
 当前网络脚本中，在各个节点上修改models/deepseek-v3.2-exp/config/ 路径下需要执行的yaml文件中model_config配置项，配置过程如下：
 - 增加 enable_pypto: True配置将pypto的lighning_indexer算子集成到网络中
 ```
 model_config:
     enable_pypto: True
-```
-修改`models/deepseek-v3.2-exp/set_env.sh`中CANN_PATH配置:
-``` shell
-CANN_PATH=/usr/local/Ascend/latest
-export ASCEND_HOME_PATH=$CANN_PATH
 ```
 
 ### 推理执行
