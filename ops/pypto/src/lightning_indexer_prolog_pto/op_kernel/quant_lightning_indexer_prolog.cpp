@@ -227,7 +227,9 @@ void QuantLightningIndexerPrologCompute(const QuantIndexerPrologInput &inputs, Q
                 auto hadamardQ = Reshape(inputs.hadamardQ, {1, headDim, headDim}, {1, headDim, headDim});
 
                 config::SetSemanticLabel("Query-Hadamard");
-                TileShape::Current().SetCubeTile({qHd[L0M_INDEX], qHd[L1M_INDEX]}, {qHd[L0K_INDEX], qHd[L1K_INDEX]},
+                const int64_t cur_max_unroll = 32;
+                int64_t qHdMTile = tTile < cur_max_unroll ? cur_max_unroll : qHd[L0M_INDEX];
+                TileShape::Current().SetCubeTile({qHdMTile, qHdMTile}, {qHd[L0K_INDEX], qHd[L1K_INDEX]},
                     {qHd[L0N_INDEX], qHd[L1N_INDEX]});
                 auto qHadamard =
                     Matrix::BatchMatmul<false, false, false>(xDtype, qConcat, hadamardQ); // (tTile, headNum, headDim)

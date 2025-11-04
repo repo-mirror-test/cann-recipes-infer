@@ -50,8 +50,8 @@ void SetPerfConfig() {
  
 void SetTileConfigParams(LightningIndexerPrologParams &params) {
     QuantIndexerConfigs configs;
-    configs.qLinear = {16, 16, 512, 512, 128, 128};
-    configs.qHd = {32, 32, 128, 128, 128, 128};
+    configs.qLinear = {32, 32, 512, 512, 128, 128};
+    configs.qHd = {64, 64, 128, 128, 128, 128};
     configs.kLinear = {16, 16, 512, 512, 64, 64};
     configs.wLinear = {16, 16, 1024, 1024, 32, 32};
     params.quantIndexerPrologConfigs = configs;
