@@ -310,11 +310,19 @@ hidden_states = hidden_states_share + hidden_states_router
 
 基于Atlas A3，本实践对 DeepSeek V3.2 Exp 与 DeepSeek V3.1 W8A8C8版本进行了性能Benchmark测试。从吞吐对比曲线可见，随着序列长度增加，DeepSeek V3.2 Exp 的性能优势逐步扩大，当序列长度达到 128K 时，其吞吐达到 DeepSeek V3.1 的 450%。
 
-长序列场景下，模型吞吐性能仍存在进一步优化空间。当前受限于 KVCache 内存容量，batch size 难以进一步提升，后续可通过 KVCache Offload 技术方案进一步提升吞吐。
-
 <p align="center">
   <img src="./figures/benchmark.jpg" width="50%" alt="benchmark">
 </p>
+
+长序列场景下，模型吞吐性能仍存在进一步优化空间。当前受限于 KVCache 内存容量，batch size 难以进一步提升，后续可通过 KVCache Offload 技术方案进一步提升吞吐。
+
+
+| Global Batch Size | Seq Length | Chips | TPOT (ms) | Throughput (tokens/p/s) |
+| ----------------- | ---------- | ----- | --------- | ----------------------- |
+| 256               | 65536      | 64    | 19.84     | 202                     |
+| 512               | 65536      | 64    | 22.78     | 351                     |
+| 128               | 131072     | 64    | 18.85     | 106                     |
+| 512               | 131072     | 64    | 25.8      | 310                     |
 
 注：性能数据基于 MTP3 与 perfect eplb配置采集，平均 3 个 draft token 中 accept token 为 1.44 个。
 
