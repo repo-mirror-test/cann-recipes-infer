@@ -1049,15 +1049,17 @@ class DeepseekIndexerAttention(nn.Module):
                 "tile_size": 128,
                 "k_nope_clip_alpha": self.ckv_a_alpha
             })
+            
+        q_nope, q_pe, dequant_scale_q_nope, qr, dequant_q_norm = torch.ops.custom.npu_mla_prolog_v3(
+            **mla_prolog_input_args
+        )
+        
+        if self.kv_cache_c8:
             latent_cache = nope_cache.view(-1, nope_cache.shape[-1])[: bsz * q_len, :]
         else:
             latent_cache = torch.cat([
                 nope_cache.view(-1, nope_cache.shape[-1])[: bsz * q_len, :],
                 rope_cache.view(-1, self.qk_rope_head_dim)[: bsz * q_len, :]], dim=-1)
-        
-        q_nope, q_pe, dequant_scale_q_nope, qr, dequant_q_norm = torch.ops.custom.npu_mla_prolog_v3(
-            **mla_prolog_input_args
-        )
 
         if self.cp_size > 1:
             # nope and rope is aligned by pa block, so need slice
@@ -1368,13 +1370,18 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         self.hccl_comm_dict = kwargs.get("hccl_comm_dict", None)
         self.max_position_embeddings = self.runner_settings.get("data_config").get("max_position_embeddings", 2048)
 
-        self.embed_tokens = VocabParallelEmbedding(
-            self.vocab_size,
-            config.hidden_size,
-            self.padding_idx,
-            torch.bfloat16,
-            tp_size=self.embed_tp_size,
-            tp_rank=dist.get_rank(self.hccl_comm_dict["embed_tp_group"]) if self.embed_tp_size > 1 else 0)
+        is_mtp = kwargs.get("is_mtp")
+        if not is_mtp:
+            self.embed_tokens = VocabParallelEmbedding(
+                self.vocab_size,
+                config.hidden_size,
+                self.padding_idx,
+                torch.bfloat16,
+                tp_size=self.embed_tp_size,
+                tp_rank=dist.get_rank(self.hccl_comm_dict["embed_tp_group"]) if self.embed_tp_size > 1 else 0)
+        else:
+            self.embed_tokens = None
+        
         self.layers = nn.ModuleList(
             [
                 DeepseekV3DecoderLayer(config, self.runner_settings, layer_idx, prefix, **kwargs)
@@ -1581,7 +1588,10 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         self.rank_offset = int(os.getenv("RANK_OFFSET", "0"))
         self.global_rank = self.local_rank + self.rank_offset
         self.world_size = self.runner_settings.get("world_size", 16)
-        kwargs = {"global_rank": self.global_rank}
+        kwargs = {
+                    "global_rank": self.global_rank,
+                    "is_mtp": is_mtp
+                }
         default_pg = get_default_group()
         if default_pg is not None:
             if dist.get_world_size() > 1:
@@ -1599,13 +1609,16 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         self.model = DeepseekV3ModelMTPLayer(config, self.runner_settings, mtp_layer_idx, prefix, **kwargs) \
                     if is_mtp else DeepseekV3Model(config, self.runner_settings, prefix, **kwargs)
         self.vocab_size = config.vocab_size
-        self.lm_head = ColumnParallelLinear(
-            input_size=config.hidden_size,
-            output_size=config.vocab_size,
-            bias=False,
-            tp_size=self.lmhead_tp_size,
-            tp_rank=dist.get_rank(self.hccl_comm_dict.get("lmhead_tp_group")) if self.lmhead_tp_size > 1 else 0
-            )
+        if not is_mtp:
+            self.lm_head = ColumnParallelLinear(
+                input_size=config.hidden_size,
+                output_size=config.vocab_size,
+                bias=False,
+                tp_size=self.lmhead_tp_size,
+                tp_rank=dist.get_rank(self.hccl_comm_dict.get("lmhead_tp_group")) if self.lmhead_tp_size > 1 else 0
+                )
+        else:
+            self.lm_head = None
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1946,7 +1959,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
 
     def init_cache(
         self,
-        input_ids,
+        device,
         num_hidden_layers=61,
     ):
         cache_seq_len = self.max_position_embeddings
@@ -1973,18 +1986,18 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                     )
 
         for _ in range(num_hidden_layers):
-            cache_nope = torch.zeros(cache_nope_shape, dtype=dtype, device=input_ids.device)
+            cache_nope = torch.zeros(cache_nope_shape, dtype=dtype, device=device)
             if self.kv_cache_c8:
                 past_key_values += ((cache_nope, None),)
             else:
-                cache_rope = torch.zeros(cache_rope_shape, dtype=dtype, device=input_ids.device)
+                cache_rope = torch.zeros(cache_rope_shape, dtype=dtype, device=device)
                 past_key_values += ((cache_nope, cache_rope),)
 
         return past_key_values
 
     def init_cache_for_indexer(
         self,
-        input_ids,
+        device,
         num_hidden_layers=61,
     ):
         cache_seq_len = self.max_position_embeddings
@@ -2005,10 +2018,10 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                     )
 
         for _ in range(num_hidden_layers):
-            key_cache = torch.zeros(cache_key_shape, dtype=dtype, device=input_ids.device)
+            key_cache = torch.zeros(cache_key_shape, dtype=dtype, device=device)
             past_key_values += ((key_cache, ),)
             if self.kv_cache_c8:
-                key_scales_cache = torch.zeros(cache_key_scales_shape, dtype=torch.float16, device=input_ids.device)
+                key_scales_cache = torch.zeros(cache_key_scales_shape, dtype=torch.float16, device=device)
                 past_key_scales += ((key_scales_cache, ),)
 
         return past_key_values, past_key_scales

@@ -370,10 +370,10 @@ class Infer(nn.Module):
             return 1
         return math.ceil(prefill_profile_cycle / self.prefill_cycles)
     
-    def init_cache(self, model, inputs, input_dict):
+    def init_cache(self, model, device, input_dict):
         if input_dict['past_key_values'] is None:
             input_dict['past_key_values'] = model.init_cache(
-                inputs.input_ids,
+                device,
                 num_hidden_layers=self.next_n if model.is_mtp else model.config.num_hidden_layers
             )
         
@@ -381,7 +381,7 @@ class Infer(nn.Module):
             and input_dict['past_key_scales_indexer'] is None:
             input_dict['past_key_values_indexer'], input_dict['past_key_scales_indexer'] = \
                 model.init_cache_for_indexer(
-                inputs.input_ids,
+                device,
                 num_hidden_layers=self.next_n if model.is_mtp else model.config.num_hidden_layers
             )
 
@@ -413,7 +413,7 @@ class Infer(nn.Module):
             "prev_hidden_states": None,
             "is_prefill": True,
         }
-        self.init_cache(self.main_model.model, inputs, input_dict_main)
+        self.init_cache(self.main_model.model, self.main_model.device, input_dict_main)
 
         input_dict_mtp = None
         if self.mtp_model is not None:
@@ -430,7 +430,7 @@ class Infer(nn.Module):
                 "spec_tokens": None,
                 "kv_len_cached": None
             }
-            self.init_cache(self.mtp_model.model, inputs, input_dict_mtp)
+            self.init_cache(self.mtp_model.model, self.mtp_model.device, input_dict_mtp)
 
         return input_dict_main, input_dict_mtp, inputs, input_lens
 
@@ -538,13 +538,13 @@ class Infer(nn.Module):
         prof.step()
         return input_dict_main_single_cycle, input_dict_mtp_single_cycle, mtp_argdict_single_cycle
 
-    def allocate_cp_prefill_multi_cycle_tmpkv(self, input_ids):
+    def allocate_cp_prefill_multi_cycle_tmpkv(self):
         if self.main_model.cp_size > 1:
             if self.tmp_kv is None:
-                self.tmp_kv = self.main_model.model.init_cache(input_ids, num_hidden_layers=1)
+                self.tmp_kv = self.main_model.model.init_cache(self.main_model.device, num_hidden_layers=1)
             if self.tmp_indexer_kv is None or self.tmp_indexer_ks is None:
                 self.tmp_indexer_kv, self.tmp_indexer_ks = \
-                    self.main_model.model.init_cache_for_indexer(input_ids, num_hidden_layers=1)
+                    self.main_model.model.init_cache_for_indexer(self.main_model.device, num_hidden_layers=1)
 
     def cat_mini_batch_res(self, input_dict_cycles_res):
         input_dict = {}
@@ -636,7 +636,7 @@ class Infer(nn.Module):
                                                                               warm_up)
 
         if self.main_model.cp_size > 1:
-            self.allocate_cp_prefill_multi_cycle_tmpkv(input_dict_main['input_ids'])
+            self.allocate_cp_prefill_multi_cycle_tmpkv()
 
         batch_size, seq_len = inputs.input_ids.shape
         mtp_argdict = {}
