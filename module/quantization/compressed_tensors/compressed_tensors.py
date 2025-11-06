@@ -154,6 +154,19 @@ class CompressedTensorsConfig(QuantizationConfig):
         # Both symmetric and asymmetric input quantization supported.
         # Only symmetric weight quantization supported.
         return is_8_bits and is_token and weight_quant.symmetric and is_dynamic
+    
+    def is_wNa16_group_channel(self,
+                            weight_quant: BaseModel,
+                            input_quant: BaseModel,) -> bool:
+        input_quant_none = input_quant is None
+        is_symmetric = weight_quant.symmetric
+        is_channel_group = (
+            weight_quant.strategy == QuantizationStrategy.CHANNEL.value
+            or weight_quant.strategy == QuantizationStrategy.GROUP.value
+        )
+        is_static = not weight_quant.dynamic
+
+        return is_channel_group and input_quant_none and is_symmetric and is_static
 
     def _get_scheme_from_parts(
             self,
