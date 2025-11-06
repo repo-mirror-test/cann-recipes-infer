@@ -13,7 +13,7 @@ Qwen3-MoE模型是2025年开源的大语言模型，包括Qwen3-235B-A22B与Qwen
 
    本样例的编译执行依赖CANN开发套件包（cann-toolkit）与CANN二进制算子包（cann-kernels），支持的CANN软件版本为`CANN 8.3.RC1.alpha002`。
 
-   请从[软件包下载地址](https://www.hiascend.com/developer/download/community/result?module=cann&cann=8.3.RC1.alpha002)下载`Ascend-cann-toolkit_${version}_linux-${arch}.run`与`Ascend-cann-kernels-${chip_type}_${version}_linux-${arch}.run`软件包，并参考[CANN安装文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0001.html?Mode=PmIns&OS=Debian&Software=cannToolKit)进行安装。
+   请从[软件包下载地址](https://www.hiascend.com/developer/download/community/result?module=cann&cann=8.3.RC1.alpha002)下载`Ascend-cann-toolkit_${version}_linux-${arch}.run`与`Atlas-A3-cann-kernels_${version}_linux-${arch}.run`软件包，并参考[CANN安装文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0001.html?Mode=PmIns&OS=Debian&Software=cannToolKit)进行安装。
 
 2. 安装Ascend Extension for PyTorch（torch_npu）。
 
@@ -37,7 +37,6 @@ Qwen3-MoE模型是2025年开源的大语言模型，包括Qwen3-235B-A22B与Qwen
    - `IPs`：配置所有节点的IP，按照rank id排序，多个节点的ip通过空格分开，例如：`('xxx.xxx.xxx.xxx' 'xxx.xxx.xxx.xxx')`。
    - `recipes_path`: 当前代码仓根目录，例如`/home/cann-recipes-infer`。
    - `cann_path`: CANN软件包安装路径，例如`/usr/local/Ascend/ascend-toolkit/latest`。
-   - `driver_path`: 固件驱动包安装路径，例如`/usr/local/Ascend/driver`。
     > 说明：HCCL相关配置，如：`HCCL_SOCKET_IFNAME`、`HCCL_OP_EXPANSION_MODE`，可以参考[集合通信文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/maintenref/envvar/envref_07_0001.html#ZH-CN_TOPIC_0000002449945377__section163522499503)并在`executor/scripts/function.sh`中自定义配置。
 
 ## 权重准备
@@ -50,7 +49,7 @@ Qwen3-MoE模型是2025年开源的大语言模型，包括Qwen3-235B-A22B与Qwen
 
 1. 配置推理执行需要加载的权重文件以及YAML文件。
 
-   - 修改YAML文件中`model_path`参数。
+   - 修改YAML文件中`model_path`参数。关于YAML文件中的更多配置说明可参见[YAML参数描述](./config/README.md)。
 
      在`models/qwen3_moe/config`目录下已提供了较优性能的YAML样例供您参考，您可以根据模型类型选择对应的YAML文件，本文以`models/qwen3_moe/config/qwen3_235b_16tp.yaml`文件为例，修改其中的`model_path`参数，将其设置为[权重准备](#权重准备)阶段准备好的权重文件存储路径，例如`/data/models/qwen3_origin_weight/`。
 

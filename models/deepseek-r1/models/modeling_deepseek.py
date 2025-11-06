@@ -520,7 +520,8 @@ class DeepseekV3MoE(nn.Module):
                 "row_idx_type": 0,
                 "drop_pad_mode": 0
             })
-        # A8W8量化场景npu_moe_init_routing_v2算子融合了后面的dynamicquant算子，输出INT8数据及对应的pertoken_scale
+        # The A8W8 quantization scenario npu_moe_init_routing_v2 operator is fused with the subsequent 
+        # dynamicquant operator, outputting INT8 data and the corresponding pertoken_scale.
         expanded_x, expanded_row_idx, tokens_per_expert, pertoken_scale = torch_npu.npu_moe_init_routing_v2(
             hidden_states, **routing_args
         )
@@ -558,11 +559,14 @@ class DeepseekV3MoE(nn.Module):
         combine_tokens = combine_tokens.view(2, self.moe_ep_size, -1).sum(2)
         all_tokens = combine_tokens[0].sum()
         combine_tokens_cpu = combine_tokens.cpu().tolist()
-        # alltoall input splits, 大小为当前rank路由到其他rank的tokens数总和
+        # alltoall input splits, the size is the total number 
+        # of tokens that the current rank routes to other ranks
         input_splits = combine_tokens_cpu[1]
-        # alltoall output splits, 每个rank拿到的其他rank的tokens数
+        # alltoall output splits, the size is the number of tokens
+        #  that each rank receives from other ranks
         output_splits = combine_tokens_cpu[0]
-        # alltoall output, 展开成一维，大小为其他卡路由到当前rank的tokens数总和
+        # alltoall output, the size is the total number of tokens
+        # that each rank routes to other ranks
         gathered_tokens = expanded_x.new_empty(all_tokens.item(), expanded_x.shape[1])
         dist.all_to_all_single(gathered_tokens, expanded_x, output_splits, input_splits, group=self.moe_ep_group)
 

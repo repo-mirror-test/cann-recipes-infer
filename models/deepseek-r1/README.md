@@ -35,7 +35,6 @@ DeepSeek-R1和Kimi-K2都是2025年开源的大语言模型，二者结构类似�
    - `IPs`：配置所有节点的IP，按照rank id排序，多个节点的ip通过空格分开，例如：`('xxx.xxx.xxx.xxx' 'xxx.xxx.xxx.xxx')`。
    - `recipes_path`: 当前代码仓根目录，例如`/home/cann-recipes-infer`。
    - `cann_path`: CANN软件包安装路径，例如`/usr/local/Ascend/ascend-toolkit/latest`。
-   - `driver_path`: 固件驱动包安装路径，例如`/usr/local/Ascend/driver`。
 
    > 说明：HCCL相关配置，如：`HCCL_SOCKET_IFNAME`、`HCCL_OP_EXPANSION_MODE`，可以参考[集合通信文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/maintenref/envvar/envref_07_0001.html#ZH-CN_TOPIC_0000002449945377__section163522499503)并在`executor/scripts/function.sh`中自定义配置。
 
@@ -70,7 +69,7 @@ Deepseek-R1与Kimi-K2的原始权重下载地址如下：
 
 1. 配置推理执行需要加载的权重文件以及YAML文件。
 
-   - 修改YAML文件中`model_path`参数。
+   - 修改YAML文件中`model_path`参数。关于YAML文件中的更多配置说明可参见[YAML参数描述](./config/README.md)。
 
      在`models/deepseek-r1/config`目录下已提供了较优性能的YAML样例供您参考，您可以根据模型类型、集群规模以及量化类型选择对应的YAML文件，本文以`models/deepseek-r1/config/decode_r1_rank_16_16ep_a8w8.yaml`文件为例，修改其中的`model_path`参数，将其设置为[权重转换](#权重转换)阶段准备好的权重文件存储路径，例如`/data/models/origin/DeepSeek-R1-W8A8`。
 
@@ -134,49 +133,3 @@ Deepseek-R1与Kimi-K2的原始权重下载地址如下：
     可通过YAML中的`enable_prefill_multi_cycle`开关使能，当前仅支持mini_batch的大小为1，即逐batch进行推理。
 
   - 为了缓解MoE负载不均带来的峰值内存，我们可进行Chunk MoE推理，即在MoE切Chunk串行推理，降低极端场景下的峰值内存，可通过YAML中的`moe_chunk_max_len`开关设置chunk的大小。当前该开关只针对prefill生效，开启后，由于MoE部分将串行计算各chunk，会对prefill的性能产生相应的影响。
-
-  > 关于YAML文件中的更多配置说明可参见下方的[YAML文件配置说明](#YAML文件配置说明)。
-
-### YAML文件配置说明
-
-路径中涉及到`DATE`和`CASE_NAME`分别为执行推理脚本的日期和案例名称，由`executor\scripts\function.sh`自动生成，`CASE_NAME`由`model_name`和YAML文件名拼接生成。
-
-```yaml
-model_name: "deepseek_r1"      # 模型名字
-model_path: "your_model_path"  # 模型的权重路径
-exe_mode: "ge_graph"           # ["ge_graph", "acl_graph", "eager"], mode of decode
-world_size: 16                 # 表示使用几张芯片执行推理
-
-model_config:
-  mm_quant_mode: A8W8     # ["A16W16", "A8W8"] 量化模式
-  gmm_quant_mode: A8W8    # ["A16W16", "A8W8"] 量化模式
-  next_n: 0               # 表示MTP head的个数，目前仅支持1个MTP head, next_n为0表示不开启MTP
-  enable_pa: False        # [False, True] 是否使用PageAttention
-  pa_block_size: 128      # PageAttention的block size
-  enable_weight_nz: True  # [False, True] 是否对matmul的权重转NZ格式
-  enable_mla_prolog: True # [False, True] 是否使用mla_prolog融合算子
-  with_ckpt: True         # [False, True] 是否从ckpt加载权重，否则随机初始化
-  enable_multi_streams: True  # [False, True] 图模式下是否开启多流
-  enable_profiler: False  # [False, True] 是否开启profiling，缓存默认路径为`./res/DATE/CASE_NAME`
-  perfect_eplb: False     # [False, True] 是否开启完全负载均衡
-  enable_cache_compile: False # [False, True] 是否开启图编译缓存功能，开启后缓存默认路径为`./compile_cache/CASE_NAME`
-  enable_prefill_multi_cycle: False # [False, True] 是否对prefill推理拆分成多个单batch推理
-  enable_superkernel: False         # [False, True] 是否开始superkernel融合（技术开发中，还未使能）
-  enable_online_split_weight: True  # [False, True] 是否使能权重在线切分
-  moe_chunk_max_len: 65536          # moe层对长序列进行chunk,分多次计算
-  micro_batch_mode: 0               # [0, 1] 0关闭prefill microbatch, 1开启prefill microbatch
-
-data_config:
-  dataset: "default"  # ["default", "LongBench"] 输入的prompt内容
-  input_max_len: 32   # 请求的输入长度
-  max_new_tokens: 100 # 输出的最大长度
-  batch_size: 64      # 全局所有的请求数，取值必须为attn_dp_size的整数倍
-
-parallel_config:
-  attn_tp_size: 1      # Attn Tensor并行数，attn_dp_size=world_size // attn_tp_size
-  moe_tp_size: 1       # MoE Tensor并行数，moe_ep_size=world_size // moe_tp_size
-  dense_tp_size: 1     # Dense层 matmul Tensor并行数
-  embed_tp_size: 16    # Embedding Tensor并行数，目前仅支持大于等于attn_tp_size，且为attn_tp_size的整数倍
-  lmhead_tp_size: 16   # LMHEAD层 matmul Tensor并行数
-  enable_o_proj_alltoall: False    # [False, True] 开关仅在prefill阶段生效，通过在Prefill阶段的o_proj计算之前采用all-to-all通信，实现SP-TP-SP混合切分策略
-```
