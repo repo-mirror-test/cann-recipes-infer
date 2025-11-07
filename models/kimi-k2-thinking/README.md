@@ -34,7 +34,7 @@
 
 ### 下载权重
 
-  下载[Kimi-K2-Thinking原始fp8权重](https://huggingface.co/moonshotai/Kimi-K2-Thinking)，并上传到Atlas A3各节点某个固定的路径下，比如`/data/models/Kimi-K2-Thinking`。
+  下载[Kimi-K2-Thinking原始权重](https://huggingface.co/moonshotai/Kimi-K2-Thinking)，并上传到Atlas A3各节点某个固定的路径下，比如`/data/models/Kimi-K2-Thinking`。
 
 ### 获取 docker 镜像
   从[ARM镜像地址](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/Kimi_K2_Thinking/cann8.5_pt2.6.0_kimi_k2_aarch_image_v0.1.tar)中下载 docker 镜像，然后上传到A3服务器的每个节点上，并通过命令导入镜像 `docker load -i cann8.5_pt2.6.0_kimi_k2_aarch_image.tar`。
