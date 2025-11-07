@@ -3,7 +3,7 @@ The configuration instructions in the YAML file can be found below.
 ```yaml
 Basic Config
   model_name: "qwen3_moe"                           # The model name. String type
-  model_path: "/data/models/origin/Qwen3235BA22B" # The model path. String type
+  model_path: "/data/models/origin/Qwen3-235B-A22B" # The model path. String type
   exe_mode: "ge_graph"                              # The execution mode. Only support ["ge_graph", "eager", "acl_graph"]
   world_size: 128                                   # The world size. Int type
 
@@ -16,8 +16,8 @@ Model Config
   enable_auto_split_weight: True  # Whether enable onlinesplit weight. Support [False, True]
 
 Data Config
-  dataset: "default"  # Support ["default", "InfiniteBench", "LongBench"]
-  input_max_len: 8192 # The input max length 
+  dataset: "default"  # Support ["default", "LongBench"]
+  input_max_len: 5120 # The input max length
   max_new_tokens: 100 # The max new tokens
   batch_size: 128     # The global batch size
 

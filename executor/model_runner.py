@@ -223,7 +223,7 @@ class ModelRunner:
         # before and after the text.
         if self.runner_settings.get("data_config").get("dataset", "default") != "default":
             from executor.utils.data_utils import build_dataset_input
-            prompts = build_dataset_input(self.tokenizer, prompts, self.input_max_len)
+            prompts = build_dataset_input(self.tokenizer, prompts, self.input_max_len, self.max_new_tokens)
         inputs = self.tokenizer(prompts, **kwargs).to(self.device)
 
         return inputs

@@ -98,14 +98,23 @@ def generate_prompt(runner_settings):
     return get_prompts_for_cur_rank(preset_prompts, batch_size, batch_size_per_rank, global_dp_rank)
 
 
-def build_dataset_input(tokenizer, prompts, input_max_len):
+def build_dataset_input(tokenizer, prompts, input_max_len, max_new_tokens=32):
+    # Provide system prompt for the text; the default is aritcle continuation, which can be modified as needed.
+    prefix = "Please read this passage and help me continue it.\n[start of the book]\n"
+    suffix = "\n[end of the book]\n\n" + \
+            f"Now you have read it. Please continue writing this text for {max_new_tokens} words.\n\n"
+    system_prompt_len = len(tokenizer(prefix + suffix).input_ids)
+    if system_prompt_len > input_max_len:
+        logging.info("The parameter 'input_max_len' should be greater than the length of system_prompt. " + \
+         "Please modify the input_max_len in the YAML file or modify system_prompt in executor/utils/data_utils.py.")
+    
     prompts_inputids = tokenizer(prompts).input_ids
     out_prompts = []
     for prompt_inputids in prompts_inputids:
-        # Provide system prompt for the text; the default is a summary, which can be modified as needed.
-        prompt = "Please read a part of the book below, and then give me the summary.\n[start of the book]\n" + \
-            tokenizer.decode(prompt_inputids[:input_max_len - 70], skip_special_tokens=True) + \
-            "\n[end of the book]\n\nNow you have read it. Please summarize it for me. " + \
-            "First, tell me the title and the author, and then tell the story in 400 words.\n\n"
+        prompt = prefix + \
+            tokenizer.decode(prompt_inputids[:input_max_len - system_prompt_len], skip_special_tokens=True) + \
+            suffix
         out_prompts.append(prompt)
     return out_prompts
+
+

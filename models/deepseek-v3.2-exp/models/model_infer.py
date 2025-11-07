@@ -395,7 +395,8 @@ class Infer(nn.Module):
             "add_generation_prompt": True, "return_dict": True
         }
         if self.use_dataset:
-            prompts = build_dataset_input(tokenizer, prompts, self.main_model.input_max_len)
+            prompts = build_dataset_input(tokenizer, prompts, self.main_model.input_max_len,
+                                          self.main_model.max_new_tokens)
         input_prompts = []
         for prompt in prompts:
             input_prompts.append([{"role":"user", "content": prompt}])

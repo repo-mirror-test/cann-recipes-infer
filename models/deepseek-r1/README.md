@@ -14,6 +14,9 @@ DeepSeek-R1和Kimi-K2都是2025年开源的大语言模型，二者结构类似�
 
    请从[软件包下载地址](https://www.hiascend.com/developer/download/community/result?module=cann&cann=8.3.RC1.alpha003)下载`Ascend-cann-toolkit_${version}_linux-${arch}.run`与`Atlas-A3-cann-kernels_${version}_linux-${arch}.run`软件包，并参考[CANN安装文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/softwareinst/instg/instg_0001.html?Mode=PmIns&OS=Debian&Software=cannToolKit)进行安装。
 
+    - `${version}`表示CANN包版本号，如8.3.RC1.alpha003。
+    - `${arch}`表示CPU架构，如aarch64、x86_64。
+
 2. 安装Ascend Extension for PyTorch（torch_npu）。
 
    Ascend Extension for PyTorch（torch_npu）为支撑PyTorch框架运行在NPU上的适配插件，本样例支持的Ascend Extension for PyTorch版本为`7.2.RC1.alpha003`，PyTorch版本为`2.6.0`。
@@ -94,7 +97,7 @@ Deepseek-R1与Kimi-K2的原始权重下载地址如下：
      2. 若您的机器无法联网，需要您从[huggingface](http://huggingface.co/datasets/zai-org/LongBench/tree/main)手动下载数据集至`dataset/LongBench`目录下，`LongBench`文件夹需手工创建，目录中包含`LongBench.py`和`data`目录，并需要在`LongBench.py`中修改数据集加载路径；若您的机器可正常联网，样例执行过程中会自动在线读取LongBench数据集，您无需手工下载。
 
      > 说明：
-     > - 使用LongBench数据集时，默认执行文本摘要任务，可在`cann-recipes-infer/executor/utils/data_utils.py`的`build_dataset_input`函数里修改默认的system prompt。
+     > - 在使用LongBench数据集或其他自定义数据集时，默认执行文章续写任务，可在`cann-recipes-infer/executor/utils/data_utils.py`的`build_dataset_input`函数里修改默认的system prompt。
      > - 长序列请求执行中若出现`out of memory`问题，可参见附录中的[长序列请求out of memory问题处理](#long_bench_faq)。
 
 3. 执行推理脚本。

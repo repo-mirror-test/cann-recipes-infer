@@ -55,6 +55,7 @@ class DeepSeekRunner(ModelRunner):
         self.use_dataset = runner_settings.get("data_config").get("dataset", "default") != "default"
         self.prefill_cycles = 0
         self.query_id_list = []
+        self.max_new_tokens = runner_settings.get("data_config").get("max_new_tokens", 32)
 
     @override
     def init_model(self, is_mtp=False):

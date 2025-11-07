@@ -329,7 +329,8 @@ class DeepSeekRunner(ModelRunner):
 
     @override
     def check_model_cfg(self):
-        enable_kv_cache_c8 = True if self.hf_config.quant_config.kv_cache_c8 is not None else False
-        enable_mla_prolog = self.runner_settings.get("model_config").get("enable_mla_prolog", False)
-        if enable_kv_cache_c8 and not enable_mla_prolog:
-            raise ValueError("if kv_cache_quant_mode is C8, then enable_mla_prolog must be set to True.")
+        if self.hf_config.quant_config is not None:
+            enable_kv_cache_c8 = True if self.hf_config.quant_config.kv_cache_scheme is not None else False
+            enable_mla_prolog = self.runner_settings.get("model_config").get("enable_mla_prolog", False)
+            if enable_kv_cache_c8 and not enable_mla_prolog:
+                raise ValueError("if kv_cache_quant_mode is C8, then enable_mla_prolog must be set to True.")
