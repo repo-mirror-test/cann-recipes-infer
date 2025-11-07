@@ -645,7 +645,7 @@ __aicore__ inline void SFAAMatmulService<SFAAT>::ComputeMm1(const RunInfo &info,
                 WaitFlag<HardEvent::MTE1_MTE2>(mte21KVIds[kb]);
                 // 从k当中取当前的块
                 LocalTensor<K_ROPE_T> bL1Tensor = l1KVTensor[kb * L1_BLOCK_OFFSET];
-                if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+                if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                     if (kL1 == 0) {
                         DataCopyParams copyParams;
                         copyParams.blockCount = 288 / BLOCK_ELEMENT_NUM;
@@ -783,7 +783,7 @@ __aicore__ inline void SFAAMatmulService<SFAAT>::ComputeMm2(const RunInfo &info,
                     kL0Size = kL1Size - (kL0Loops - 1) * kL0Size;
                     kL0SizeAlign = SFAAAlign(kL0Size, 16U);
                 }
-                if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+                if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                     DataCopyParams copyParams;
                     copyParams.blockCount = nL1Size / BLOCK_ELEMENT_NUM;
                     copyParams.blockLen = kL0Size;

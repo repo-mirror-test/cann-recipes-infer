@@ -653,7 +653,7 @@ ge::graphStatus SFAATilingCheck::CheckSingleParaQuery() const
 
 ge::graphStatus SFAATilingCheck::CheckSingleParaKey() const
 {
-    const std::vector<size_t> keyDimNumList = {DIM_NUM_FOUR};
+    const std::vector<size_t> keyDimNumList = {DIM_NUM_THREE, DIM_NUM_FOUR};
     if (ge::GRAPH_SUCCESS != CheckDtypeSupport(opParamInfo_.key.desc, KEY_NAME) ||
         ge::GRAPH_SUCCESS != CheckLayoutSupport(kvLayout_, KEY_NAME) ||
         ge::GRAPH_SUCCESS != CheckDimNumSupport(opParamInfo_.key.shape, keyDimNumList, KEY_NAME) ||
@@ -1585,8 +1585,8 @@ ge::graphStatus SFAAInfoParser::GetKvLayout()
         OPS_LOG_E(opName_, "layoutKV is %s, it is unsupported.", layout.c_str());
         return ge::GRAPH_FAILED;
     }
-    if (qLayout_ == SFAALayout::TND && kvLayout_ != SFAALayout::PA_BSND) {
-        OPS_LOG_E(opName_, "When layoutQ is TND, layoutKV only supports PA_BSND, but now is %s.", layout.c_str());
+    if (kvLayout_ != SFAALayout::PA_BSND && qLayout_ != kvLayout_) {
+        OPS_LOG_E(opName_, "When layoutKV is not PA_BSND, layoutKV must be the same as layoutQ.");
         return ge::GRAPH_FAILED;
     }
     uint32_t keyDimNum = opParamInfo_.key.shape->GetStorageShape().GetDimNum();
@@ -1599,11 +1599,10 @@ ge::graphStatus SFAAInfoParser::GetKvLayout()
 
 ge::graphStatus SFAAInfoParser::GetS2SizeForBatchContinuous()
 {
-    if (kvLayout_ != SFAALayout::BSND) {
-        OPS_LOG_E(opName_, "the layout of key is %s, it is unsupported.", SFAALayoutToSerialString(kvLayout_).c_str());
-        return ge::GRAPH_FAILED;
-    } else if (kvLayout_ == SFAALayout::BSND) { // BSND
+    if (kvLayout_ == SFAALayout::BSND) { // BSND
         s2Size_ = GetAxisNum(keyShape_, SFAAAxis::S, kvLayout_);
+    } else if (kvLayout_ == SFAALayout::TND) {
+        s2Size_ = GetAxisNum(keyShape_, SFAAAxis::T, kvLayout_);
     }
     return ge::GRAPH_SUCCESS;
 }

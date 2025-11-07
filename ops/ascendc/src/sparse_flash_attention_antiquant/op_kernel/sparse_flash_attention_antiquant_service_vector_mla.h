@@ -345,7 +345,7 @@ __aicore__ inline void SFAAVectorService<SFAAT>::ElewiseCompute(const RunInfo &i
                                                                 uint32_t dealRowCount, uint32_t columnCount)
 {
     Muls(mmResUb, mmResUb, static_cast<T>(tilingData->baseParams.scaleValue), dealRowCount * columnCount);
-    if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+    if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
         // v0的无效值判断
         uint64_t s2ValidSizeFirstPart = v0ValidSizeUb_.GetValue(128 + info.loop % MERGE_CACHE_GM_BUF_NUM);
         uint64_t s2ValidSizeSecondPart = v0ValidSizeUb_.GetValue(256 + info.loop % MERGE_CACHE_GM_BUF_NUM);
@@ -480,7 +480,7 @@ __aicore__ inline void SFAAVectorService<SFAAT>::DealBmm1ResBaseBlock(
     WaitFlag<AscendC::HardEvent::V_MTE2>(SYNC_INPUT_BUF1_FLAG + pingpongFlag);
 
     DataCopy(mmResUb, mm1ResGm[inOutGmOffset], computeSize);
-    if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+    if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
         if (loopId == 0) {
             WaitFlag<HardEvent::MTE2_S>(0);
         }
@@ -529,7 +529,7 @@ __aicore__ inline void SFAAVectorService<SFAAT>::ProcessVec1SingleBuf(const RunI
     uint32_t loopCount = (mSplitInfo.vecDealM + mSplitSize - 1) / mSplitSize;
     uint32_t tailSplitSize = mSplitInfo.vecDealM - (loopCount - 1) * mSplitSize;
 
-    if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+    if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
         DataCopyExtParams dataCopyParams;
         dataCopyParams.blockCount = 1;
         dataCopyParams.blockLen = 256 * sizeof(int32_t);
@@ -570,13 +570,19 @@ __aicore__ inline int64_t SFAAVectorService<SFAAT>::GetKeyBNBOffset(int64_t real
     if (realS2Idx < 0 || realS2Idx >= s2IdLimit) {
         return -1;
     }
-
-    int64_t blkTableIdx = realS2Idx / constInfo.kvCacheBlockSize;
-    int64_t blkTableOffset = realS2Idx % constInfo.kvCacheBlockSize;
-    int64_t realKeyBNBOffset = blkTableGm_.GetValue(runInfo.bIdx * constInfo.maxBlockNumPerBatch + blkTableIdx) *
-                               static_cast<int64_t>(constInfo.kvCacheBlockSize) *
-                               static_cast<int64_t>(constInfo.kvHeadNum) + blkTableOffset;
-
+    int64_t realKeyBNBOffset = 0;
+    if constexpr (PAGE_ATTENTION) {
+        int64_t blkTableIdx = realS2Idx / constInfo.kvCacheBlockSize;
+        int64_t blkTableOffset = realS2Idx % constInfo.kvCacheBlockSize;
+        realKeyBNBOffset = blkTableGm_.GetValue(runInfo.bIdx * constInfo.maxBlockNumPerBatch + blkTableIdx) *
+                                static_cast<int64_t>(constInfo.kvCacheBlockSize) *
+                                static_cast<int64_t>(constInfo.kvHeadNum) +
+                                blkTableOffset;
+    } else {
+        realKeyBNBOffset = (runInfo.tensorBOffset +
+                           realS2Idx * constInfo.kvHeadNum * constInfo.combineHeadDim) /
+                           constInfo.combineHeadDim;
+    }
     return realKeyBNBOffset;
 }
 
@@ -629,13 +635,15 @@ __aicore__ inline void SFAAVectorService<SFAAT>::CopyInKv(int64_t &mte2Size, int
         return;
     }
 
-    int64_t blkTableSrcStride =
+    int64_t sparseBlockSrcStride =
         ((keyBNBOffset1 > keyBNBOffset2 ? (keyBNBOffset1 - keyBNBOffset2) :
         (keyBNBOffset2 - keyBNBOffset1)) - constInfo.sparseBlockSize);
-    uint32_t combineBytes = (constInfo.headDim * sizeof(KV_T) + constInfo.headDimRope * sizeof(K_ROPE_T) +
-        constInfo.headDim / constInfo.tileSize * sizeof(T));
-    int64_t keySrcStride = blkTableSrcStride * combineBytes;
-    if (unlikely(keySrcStride >= INT32_MAX || keySrcStride < 0 || realS2Idx1 + constInfo.sparseBlockSize >= s2IdLimit ||
+    uint32_t combineBytes = (constInfo.headDim * sizeof(KV_T) +
+                             constInfo.headDimRope * sizeof(K_ROPE_T) +
+                             constInfo.headDim / constInfo.tileSize * sizeof(T));
+    int64_t keySrcStride = sparseBlockSrcStride * combineBytes;
+    if (unlikely(keySrcStride >= INT32_MAX || keySrcStride < 0 ||
+        realS2Idx1 + constInfo.sparseBlockSize >= s2IdLimit ||
         realS2Idx2 + constInfo.sparseBlockSize >= s2IdLimit)) {
         // stride溢出、stride为负数、s2超长等异常场景，还原成2条搬运指令
         CopyInSingleKv(mte2Size, mte3Size, mergeMte3Idx, realS2Idx1, keyBNBOffset1, s2IdLimit, runInfo);

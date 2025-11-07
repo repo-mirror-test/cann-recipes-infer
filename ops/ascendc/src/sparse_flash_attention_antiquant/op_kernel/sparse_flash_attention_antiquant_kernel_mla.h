@@ -116,6 +116,8 @@ private:
     uint64_t s2BatchBaseOffset = 0;
     uint64_t tensorACoreOffset = 0ULL;
     uint64_t tensorARopeCoreOffset = 0ULL;
+    uint64_t tensorBCoreOffset = 0ULL;
+    uint64_t tensorBRopeCoreOffset = 0ULL;
     uint64_t attenOutOffset = 0ULL;
 
     uint32_t tmpBlockIdx = 0U;
@@ -305,7 +307,7 @@ __aicore__ inline void SparseFlashAttentionAntiquantMla<SFAAT>::GetSparseActualS
     if (constInfo.sparseMode == 3) {
         threshold = static_cast<int64_t>(tempLoopInfo.nextTokensPerBatch) + s1Idx + 1;
     }
-    if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+    if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
         tempLoopInfo.curActualSeqLen = (constInfo.sparseBlockCount * constInfo.sparseBlockSize > threshold) ?
                                            threshold :
                                            constInfo.sparseBlockCount * constInfo.sparseBlockSize;
@@ -346,12 +348,22 @@ __aicore__ inline void SparseFlashAttentionAntiquantMla<SFAAT>::GetSparseActualS
 template <typename SFAAT>
 __aicore__ inline uint32_t SparseFlashAttentionAntiquantMla<SFAAT>::GetActualSeqLenKV(uint32_t bIdx)
 {
-    if (constInfo.actualLenDimsKV == 0) {
-        return constInfo.kvSeqSize;
-    } else if (constInfo.actualLenDimsKV == 1) {
-        return actualSeqLengthsKVGm.GetValue(0);
+    if constexpr (KV_LAYOUT_T == SFAA_LAYOUT::TND) {
+        if (bIdx > 0) {
+            return actualSeqLengthsKVGm.GetValue(bIdx) - actualSeqLengthsKVGm.GetValue(bIdx - 1);
+        } else if (bIdx == 0) {
+            return actualSeqLengthsKVGm.GetValue(0);
+        } else {
+            return 0;
+        }
     } else {
-        return actualSeqLengthsKVGm.GetValue(bIdx);
+        if (constInfo.actualLenDimsKV == 0) {
+            return constInfo.kvSeqSize;
+        } else if (constInfo.actualLenDimsKV == 1) {
+            return actualSeqLengthsKVGm.GetValue(0);
+        } else {
+            return actualSeqLengthsKVGm.GetValue(bIdx);
+        }
     }
 }
 
@@ -472,7 +484,7 @@ __aicore__ inline void SparseFlashAttentionAntiquantMla<SFAAT>::Init(__gm__ uint
                               aiCoreIdx * dbWorkspaceRatio * constInfo.bmm2ResUbSize * sizeof(T)));
     offset += GetBlockNum() * dbWorkspaceRatio * constInfo.bmm2ResUbSize * sizeof(MM2_OUT_T);
 
-    if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+    if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
         // s2  d+rope bufNum
         kvMergeGm_.SetGlobalBuffer((__gm__ K_ROPE_T *)(workspace + offset + aiCoreIdx * 512 * 576 * 4 *
                                    sizeof(K_ROPE_T)));
@@ -493,7 +505,7 @@ __aicore__ inline void SparseFlashAttentionAntiquantMla<SFAAT>::Init(__gm__ uint
     if ASCEND_IS_AIV {
         vectorService.InitParams(constInfo, tilingData);
         vectorService.InitMm2ResInt32GmGlobalTensor(mm2ResInt32Gm);
-        if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+        if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
             vectorService.InitVec0GlobalTensor(kvValidSizeGm_, kvMergeGm_, kRopeGm, keyGm, blockTableGm);
         }
         vectorService.InitVec1GlobalTensor(mm1ResGm, vec1ResGm, actualSeqLengthsQGm,
@@ -658,15 +670,26 @@ __aicore__ inline void SparseFlashAttentionAntiquantMla<SFAAT>::CalcParams(uint3
     } else {
         actualSeqQPrefixSum = (info.bIdx <= 0) ? 0 : info.bIdx * constInfo.qSeqSize;
     }
-    info.tndBIdxOffset = actualSeqQPrefixSum * constInfo.qHeadNum * constInfo.combineHeadDim;
+    info.tndBIdxOffsetForQ = actualSeqQPrefixSum * constInfo.qHeadNum * constInfo.combineHeadDim;
+
+    uint64_t actualSeqKVPrefixSum;
+    if constexpr (KV_LAYOUT_T == SFAA_LAYOUT::TND) {
+        actualSeqKVPrefixSum = (info.bIdx <= 0) ? 0 : actualSeqLengthsKVGm.GetValue(info.bIdx - 1);
+    } else {
+        actualSeqKVPrefixSum = (info.bIdx <= 0) ? 0 : info.bIdx * constInfo.kvSeqSize;
+    }
+    info.tndBIdxOffsetForKV = actualSeqKVPrefixSum * constInfo.kvHeadNum * constInfo.combineHeadDim;
 
     if (info.isFirstSInnerLoop) {
-        tensorACoreOffset = info.tndBIdxOffset + info.gS1Idx * constInfo.combineHeadDim;
+        tensorACoreOffset = info.tndBIdxOffsetForQ + info.gS1Idx * constInfo.combineHeadDim;
+        tensorBCoreOffset = info.tndBIdxOffsetForKV + info.n2Idx * constInfo.combineHeadDim;
         if (constInfo.quantScaleRepoMode == QUANT_SCALE_REPO_MODE::COMBINE) {
             attenOutOffset = (actualSeqQPrefixSum * constInfo.qHeadNum + info.gS1Idx) * headDim;
         } else {
-            uint64_t tndBIdxRopeOffset = actualSeqQPrefixSum * constInfo.qHeadNum * headDimRope;
-            tensorARopeCoreOffset = tndBIdxRopeOffset + info.gS1Idx * headDimRope;
+            uint64_t tndBIdxRopeOffsetForQ = actualSeqQPrefixSum * constInfo.qHeadNum * headDimRope;
+            tensorARopeCoreOffset = tndBIdxRopeOffsetForQ + info.gS1Idx * headDimRope;
+            uint64_t tndBIdxRopeOffsetForK = actualSeqKVPrefixSum * constInfo.kvHeadNum * headDimRope;
+            tensorBRopeCoreOffset = tndBIdxRopeOffsetForK + info.n2Idx * headDimRope;
             attenOutOffset = tensorACoreOffset;
         }
         if (constInfo.sparseMode == 3) {
@@ -679,7 +702,7 @@ __aicore__ inline void SparseFlashAttentionAntiquantMla<SFAAT>::CalcParams(uint3
                             info.gS1Idx / constInfo.gSize * constInfo.kvHeadNum * constInfo.sparseBlockCount +
                             info.n2Idx * constInfo.sparseBlockCount;
         } else if (LAYOUT_T == SFAA_LAYOUT::TND) {   // T N2 K
-            topKBaseOffset = info.tndBIdxOffset / constInfo.gSize / constInfo.combineHeadDim * constInfo.kvHeadNum *
+            topKBaseOffset = info.tndBIdxOffsetForQ / constInfo.gSize / constInfo.combineHeadDim * constInfo.kvHeadNum *
                              constInfo.sparseBlockCount + info.n2Idx * constInfo.sparseBlockCount +
                              info.gS1Idx / constInfo.gSize * constInfo.kvHeadNum * constInfo.sparseBlockCount;
         } else {    // B N2 S1 K
@@ -692,6 +715,8 @@ __aicore__ inline void SparseFlashAttentionAntiquantMla<SFAAT>::CalcParams(uint3
     info.threshold = threshold;
     info.tensorAOffset = tensorACoreOffset;
     info.tensorARopeOffset = tensorARopeCoreOffset;
+    info.tensorBOffset = tensorBCoreOffset;
+    info.tensorBRopeOffset = tensorBRopeCoreOffset;
     info.attenOutOffset = attenOutOffset;
 
     uint64_t sInnerOffsetDataSize = info.s2Idx * constInfo.s2BaseSize;
@@ -775,7 +800,7 @@ template <typename SFAAT> __aicore__ inline void SparseFlashAttentionAntiquantMl
     bool globalLoopStart = true;
     if ASCEND_IS_AIC {
         // CrossCoreSetFlag<ConstInfo::SFAA_SYNC_MODE2, PIPE_FIX>(constInfo.syncC2V1);
-        if constexpr (PAGE_ATTENTION  && TEMPLATE_MODE == V_TEMPLATE) {
+        if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
             CrossCoreSetFlag<ConstInfo::SFAA_SYNC_MODE2, PIPE_MTE2>(3);
             CrossCoreSetFlag<ConstInfo::SFAA_SYNC_MODE2, PIPE_MTE2>(3);
             CrossCoreSetFlag<ConstInfo::SFAA_SYNC_MODE2, PIPE_MTE2>(3);
@@ -821,7 +846,7 @@ template <typename SFAAT> __aicore__ inline void SparseFlashAttentionAntiquantMl
         constInfo.gS1Start = 0;
     }
     if ASCEND_IS_AIV {
-        if constexpr (PAGE_ATTENTION  && TEMPLATE_MODE == V_TEMPLATE) {
+        if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
             CrossCoreWaitFlag(3);
             CrossCoreWaitFlag(3);
             CrossCoreWaitFlag(3);
@@ -843,12 +868,12 @@ SparseFlashAttentionAntiquantMla<SFAAT>::PreloadPipeline(uint32_t loop, uint64_t
 
     if (extraInfo0.isValid) {
         if ASCEND_IS_AIC {
-            if constexpr (PAGE_ATTENTION  && TEMPLATE_MODE == V_TEMPLATE) {
+            if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                 CrossCoreWaitFlag(constInfo.syncV0C1);
             }
             ComputeMm1(extraInfo0);
         } else {
-            if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+            if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                 CrossCoreWaitFlag(3);
                 vectorService.MergeKv(extraInfo0);
                 CrossCoreSetFlag<ConstInfo::SFAA_SYNC_MODE2, PIPE_MTE3>(constInfo.syncV0C1);
@@ -861,7 +886,7 @@ SparseFlashAttentionAntiquantMla<SFAAT>::PreloadPipeline(uint32_t loop, uint64_t
         }
         if ASCEND_IS_AIC {
             ComputeMm2(extraInfo2);
-            if constexpr (PAGE_ATTENTION && TEMPLATE_MODE == V_TEMPLATE) {
+            if constexpr (TEMPLATE_MODE == V_TEMPLATE) {
                 CrossCoreSetFlag<ConstInfo::SFAA_SYNC_MODE2, PIPE_MTE2>(3);
             }
         }
