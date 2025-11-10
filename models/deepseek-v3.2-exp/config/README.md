@@ -8,8 +8,6 @@ Basic Config
   world_size: 128                                   # The world size. Int type
 
 Model Config
-  mm_quant_mode: A16W16           # Linear operation quant mode. currently only support A16W16
-  gmm_quant_mode: A16W16          # GMM operation quant mode. currently only support A16W16
   pa_block_size: 128              # PA Block Size value. Support [128, 256] 
   enable_weight_nz: True          # Whether use nz-weight format for better performance. Support [False, True]
   with_ckpt: True                 # Whether load ckpt. Support [False, True]

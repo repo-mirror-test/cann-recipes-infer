@@ -28,10 +28,11 @@ from module.fuse_moe_gmm import FusedMoEGMM
 from .utils import (find_matched_target, is_activation_quantization_format, should_ignore_layer)
 
 QUANTIZATION_SCHEME_MAP_TYPE = dict[str, Optional[dict[str, QuantizationArgs]]]
+QUANT_MODE_W8A8 = "W8A8"
+QUANT_MODE_W16A16 = "W16A16"
 
 
 class CompressedTensorsConfig(QuantizationConfig):
-
     def __init__(
         self,
         target_scheme_map: dict[str, Any],
@@ -53,6 +54,9 @@ class CompressedTensorsConfig(QuantizationConfig):
         self.sparsity_scheme_map = sparsity_scheme_map
         self.sparsity_ignore_list = sparsity_ignore_list
         self.config = config
+        # quant_mode default QUANT_MODE_W16A16, will be initalized in function from_config()
+        self.mm_quant_mode = QUANT_MODE_W16A16
+        self.gmm_quant_mode = QUANT_MODE_W16A16
 
     def get_linear_method(self) -> "CompressedTensorsLinearMethod":
         return CompressedTensorsLinearMethod(self)
@@ -69,6 +73,8 @@ class CompressedTensorsConfig(QuantizationConfig):
         layer: torch.nn.Module,
         prefix: str,
     ) -> Optional["QuantizeMethodBase"]:
+        if should_ignore_layer(layer_name=prefix, ignore=self.ignore):
+            return UnquantizedLinearMethod()    
         if isinstance(layer, LinearBase):
             scheme = self.get_scheme(layer=layer, layer_name=prefix)
             layer.scheme = scheme
@@ -85,14 +91,24 @@ class CompressedTensorsConfig(QuantizationConfig):
         target_scheme_map = cls._quantization_scheme_map_from_config(
             config=config)
 
-        return cls(target_scheme_map=target_scheme_map,
-                ignore=ignore,
-                quant_format=quant_format,
-                kv_cache_scheme=config.get("kv_cache_scheme"),
-                sparsity_scheme_map=None,
-                sparsity_ignore_list=None,
-                config=config
+        quant_config_instance = cls(target_scheme_map=target_scheme_map,
+                                    ignore=ignore,
+                                    quant_format=quant_format,
+                                    kv_cache_scheme=config.get("kv_cache_scheme"),
+                                    sparsity_scheme_map=None,
+                                    sparsity_ignore_list=None,
+                                    config=config
         )
+        quant_config_instance.mm_quant_mode = quant_config_instance._get_quant_mode(
+            target_scheme_map=target_scheme_map,
+            target="Linear")
+        if "MoEGMM" in target_scheme_map:
+            quant_config_instance.gmm_quant_mode = quant_config_instance._get_quant_mode(
+                target_scheme_map=target_scheme_map,
+                target="MoEGMM")
+        else:
+            quant_config_instance.gmm_quant_mode = quant_config_instance.mm_quant_mode
+        return quant_config_instance
 
     @classmethod
     def _quantization_scheme_map_from_config(
@@ -137,7 +153,15 @@ class CompressedTensorsConfig(QuantizationConfig):
                         target_scheme_map[target][
                             "input_activations"] = QuantizationArgs.model_validate(
                                 quant_config.get("input_activations"))
+                else:
+                    raise ValueError(f"quant format {quant_format} is not valid")
         return target_scheme_map
+
+    def _get_quant_mode(self, target_scheme_map: dict[str, Any], target: str) -> str:   
+        weight_quant_mode = "W" + str(target_scheme_map[target].get("weights").num_bits)
+        input_quant_mode = "A" + str(target_scheme_map[target].get("input_activations").num_bits)
+        quant_mode = weight_quant_mode + input_quant_mode
+        return quant_mode
 
     def is_dynamic_token_w8a8(self,
                                weight_quant: BaseModel,

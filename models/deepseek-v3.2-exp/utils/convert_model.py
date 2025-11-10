@@ -115,7 +115,7 @@ def is_ignore_quant(weight_name, quant_ignore_layers_name):
     return is_ignore
 
 
-def generate_ignore_item(num_layers):
+def generate_ignore_item(num_layers, num_hidden_layers):
     """
     Generate a list of layer names to be ignored during quantization.
     """
@@ -128,6 +128,9 @@ def generate_ignore_item(num_layers):
         ignore.append(f'model.layers.{i}.self_attn.q_a_proj')
         if i >= 3:
             ignore.append(f'model.layers.{i}.mlp.gate')
+        if i >= num_hidden_layers:
+            ignore.append(f'model.layers.{i}.eh_proj')
+            ignore.append(f'model.layers.{i}.shared_head.head')
     ignore.append('lm_head')
     return ignore
 
@@ -146,8 +149,8 @@ def generate_quant_group(a_num_bits=8, w_num_bits=8, targets=None):
     return quant_group
 
 
-def generate_quant_config(c8, num_layers):
-    ignores = generate_ignore_item(num_layers=num_layers)
+def generate_quant_config(c8, num_layers, num_hidden_layers):
+    ignores = generate_ignore_item(num_layers=num_layers, num_hidden_layers=num_hidden_layers)
     kv_cache_scheme = {"num_bits": 8} if c8 else None
     quant_config = {"config_groups": {"group_0": {}}, "format": "int-quantized",
                     "global_compression_ratio": 1, "ignore": ignores, "kv_cache_scheme": kv_cache_scheme,
@@ -271,9 +274,9 @@ def main(fp8_path, output_path, w8a8, c8=False, clip=False, quant_param_path=Non
     num_layers = num_hidden_layers + num_nextn_predict_layers
     quant_ignore_layers = []
     if w8a8:
-        quantization_config = generate_quant_config(c8, num_layers)
+        quantization_config = generate_quant_config(c8, num_layers, num_hidden_layers)
         config['quantization_config'] = quantization_config
-        quant_ignore_layers = generate_ignore_item(num_layers)
+        quant_ignore_layers = generate_ignore_item(num_layers, num_hidden_layers)
 
     # Cache for loaded safetensor files
     loaded_files = {}

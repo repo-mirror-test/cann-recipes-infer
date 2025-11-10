@@ -4,8 +4,6 @@ exe_mode: "ge_graph"          # ["ge_graph", "eager"], mode of decode
 world_size: 128               # world_size = 2 * chip_num in A3
 
 model_config:
-  mm_quant_mode: A16W16
-  gmm_quant_mode: A16W16
   next_n: 1
   pa_block_size: 128
   enable_weight_nz: True

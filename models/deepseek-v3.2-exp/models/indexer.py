@@ -64,7 +64,6 @@ class Indexer(nn.Module):
         self.attn_tp_size = self.runner_settings.get("parallel_config").get("attn_tp_size", 1)
         self.cp_size = self.runner_settings.get("parallel_config").get("cp_size", 1)
 
-        self.mm_quant_mode = runner_settings.get("model_config").get("mm_quant_mode", "A16W16")
         self.enable_multi_streams = runner_settings.get("model_config").get("enable_multi_streams", False)
         self.enable_gegraph = runner_settings.get("exe_mode", "ge_graph") == "ge_graph"
         self.enable_pypto = self.runner_settings.get("model_config").get("enable_pypto", False)
@@ -87,12 +86,12 @@ class Indexer(nn.Module):
         self.wk = ReplicatedLinear(self.dim,
                                     self.head_dim,
                                     bias=False,
-                                    quant_config=None,
+                                    quant_config=config.quant_config,
                                     prefix=f"{prefix}.wk")
         self.weights_proj = ReplicatedLinear(self.dim,
                                     self.n_heads,
                                     bias=False,
-                                    quant_config=None,
+                                    quant_config=config.quant_config,
                                     prefix=f"{prefix}.weights_proj")
         self.k_norm = LayerNorm(self.head_dim)
         self.softmax_scale = self.head_dim ** -0.5
