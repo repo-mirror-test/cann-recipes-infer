@@ -504,6 +504,10 @@ ge::graphStatus SFATilingCheck::GetExpectedShape(gert::Shape &shapeExpected,
         OPS_LOG_E(opName_, "layout %s is unsupported", SFALayoutToSerialString(layout).c_str());
         return ge::GRAPH_FAILED;
     }
+    if (shapeExpected.GetDim(0) == 0) {
+        OPS_LOG_E(opName_, "expected shape is %s, the first dim should not be 0.", GetShapeStr(shapeExpected).c_str());
+        return ge::GRAPH_PARAM_INVALID;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -1097,6 +1101,12 @@ ge::graphStatus SFATilingCheck::CheckActualSeqLensQShape()
 
 ge::graphStatus SFATilingCheck::CheckActualSeqLens()
 {
+    if (std::string(opParamInfo_.layoutKV) == "TND" && opParamInfo_.actualSeqLengths.tensor == nullptr) {
+        OPS_LOG_E(opName_,
+                  "when the layout of key and value is TND,
+                  the actualSeqLengths of key and value shoule not be empty.");
+        return ge::GRAPH_PARAM_INVALID;
+    }
     if (ge::GRAPH_SUCCESS != CheckActualSeqLensDType() ||
         ge::GRAPH_SUCCESS != CheckActualSeqLensShape()) {
         return ge::GRAPH_FAILED;
