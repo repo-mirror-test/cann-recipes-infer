@@ -19,7 +19,7 @@
 from typing import Any, Dict, List, Optional, cast
 from pydantic import BaseModel
 import torch
-from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy
+from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy, QuantizationType
 from module.quantization import QuantizationMethods, QuantizationConfig
 from module.quantization.compressed_tensors.compressed_tensors_moe_gmm import CompressedTensorsMoEGMMMethod
 from module.quantization.compressed_tensors.compressed_tensors_a8w8_int8 import CompressedTensorsW8A8Int8LinearMethod
@@ -144,11 +144,11 @@ class CompressedTensorsConfig(QuantizationConfig):
                     input_activations = quant_config.get("input_activations")
                     # The only case where we have activation quant supported
                     # but no input_activations provided in the config
-                    # should be w8a16int8 w8a16int8 can also run for cases where
+                    # should be w4a16int4 w4a16int4 can also run for cases where
                     # there is an input_quant but it is ignored
                     if not input_activations:
                         assert target_scheme_map[target][
-                            "weights"].type == QuantizationType.FLOAT
+                            "weights"].type == QuantizationType.INT
                     else:
                         target_scheme_map[target][
                             "input_activations"] = QuantizationArgs.model_validate(
@@ -158,8 +158,14 @@ class CompressedTensorsConfig(QuantizationConfig):
         return target_scheme_map
 
     def _get_quant_mode(self, target_scheme_map: dict[str, Any], target: str) -> str:   
-        weight_quant_mode = "W" + str(target_scheme_map[target].get("weights").num_bits)
-        input_quant_mode = "A" + str(target_scheme_map[target].get("input_activations").num_bits)
+        weight_quant_mode = "W" + str(
+            target_scheme_map[target].get("weights").num_bits
+            if target_scheme_map[target].get("weights") is not None
+            else "16")
+        input_quant_mode = "A" + str(
+            target_scheme_map[target].get("input_activations").num_bits
+            if target_scheme_map[target].get("input_activations") is not None
+            else "16")
         quant_mode = weight_quant_mode + input_quant_mode
         return quant_mode
 

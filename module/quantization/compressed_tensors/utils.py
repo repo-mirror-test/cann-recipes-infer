@@ -93,6 +93,7 @@ def is_activation_quantization_format(quant_format: str) -> bool:
         CompressionFormat.naive_quantized.value,
         CompressionFormat.int_quantized.value,
         CompressionFormat.float_quantized.value,
+        CompressionFormat.pack_quantized.value,
     ]
     return quant_format in _ACTIVATION_QUANTIZATION_FORMATS
 
