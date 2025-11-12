@@ -40,6 +40,14 @@ TORCH_LIBRARY(custom, m) {
         "int kv_cache_quant_mode=0, int query_quant_mode=0, int ckvkr_repo_mode=0, int quant_scale_repo_mode=0,"
         "int tile_size=128, float qc_qr_scale=1.0, float kc_scale=1.0) ->"
         "(Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor)");
+    m.def("npu_gather_selection_kv_cache(Tensor(a!) selection_k_rope, Tensor(b!) selection_kv_cache, Tensor(c!) "
+        "selection_kv_block_table, Tensor(d!) selection_kv_block_status, Tensor selection_topk_indices, Tensor full_k_rope, "
+        "Tensor full_kv_cache, Tensor full_kv_block_table, Tensor full_kv_actual_seq, Tensor full_q_actual_seq, *, "
+        "int selection_topk_block_size=64) -> Tensor");
+    m.def("npu_gather_selection_kv_cache_functional(Tensor selection_k_rope, Tensor selection_kv_cache, "
+        "Tensor selection_kv_block_table, Tensor selection_kv_block_status, Tensor selection_topk_indices, "
+        "Tensor full_k_rope, Tensor full_kv_cache, Tensor full_kv_block_table, Tensor full_kv_actual_seq, "
+        "Tensor full_q_actual_seq, *, int selection_topk_block_size=64) -> (Tensor, Tensor, Tensor, Tensor, Tensor)");
     }
 
 // 通过pybind将c++接口和python接口绑定，这里绑定的是接口不是算子
