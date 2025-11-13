@@ -21,7 +21,7 @@ Qwen3-MoE模型是2025年开源的大语言模型，包括Qwen3-235B-A22B与Qwen
 
    Ascend Extension for PyTorch（torch_npu）为支撑PyTorch框架运行在NPU上的适配插件，本样例支持的Ascend Extension for PyTorch版本为`7.2.RC1.alpha002`，PyTorch版本为`2.6.0`。
 
-   请从[软件包下载地址](https://gitee.com/ascend/pytorch/tree/v7.2.RC1.alpha002-pytorch2.6.0)下载`v7.2.RC1.alpha002-pytorch2.6.0`源码，参考[源码编译安装](https://www.hiascend.com/document/detail/zh/Pytorch/710/configandinstg/instg/insg_0005.html)。
+   请从[软件包下载地址](https://gitcode.com/Ascend/pytorch/tree/v7.2.RC1.alpha002-pytorch2.6.0)下载`v7.2.RC1.alpha002-pytorch2.6.0`源码，参考[源码编译安装](https://www.hiascend.com/document/detail/zh/Pytorch/710/configandinstg/instg/insg_0005.html)。
 
 3. 下载项目源码并安装依赖的python库。
     ```bash
@@ -29,8 +29,8 @@ Qwen3-MoE模型是2025年开源的大语言模型，包括Qwen3-235B-A22B与Qwen
     git clone https://gitcode.com/cann/cann-recipes-infer.git
 
     # 安装依赖的python库，仅支持python 3.11
-    cd cann-recipes-infer/models/qwen3_moe
-    pip3 install -r requirements.txt
+    cd cann-recipes-infer
+    pip3 install -r ./models/qwen3_moe/requirements.txt
     ```
 
 4. 配置样例运行所需环境信息。
@@ -83,7 +83,8 @@ Qwen3-MoE模型是2025年开源的大语言模型，包括Qwen3-235B-A22B与Qwen
    cd models/qwen3_moe
    bash infer.sh
    ```
-
+   > 说明：如果是多机环境，需要在每个节点上执行。
+   
    > **需要注意**
    > - 本样例支持多卡推理（支持TP和EP切分）。
    > - 默认输入长度为4080，最大输出token数为32，decode为单batch推理。

@@ -21,6 +21,7 @@ Model Config
   enable_cache_compile: False     # Whether enable cache compile for better performance. Support [False, True]
   enable_prefill_multi_cycle: False # Whether split prefill into multiple single batch inference. Support [False, True]
   perfect_eplb: False             # Whether enable, test uniform scenario of MoE experts. Support [False, True]
+  enable_superkernel: False          # Whether enable superkernel. Support [False, True]
   enable_online_split_weight: True  # Whether enable auto-split weight. Support [False, True]
   moe_chunk_max_len: 65536          # Moe layer chunk max length. Int type
   micro_batch_mode: 0               # Whether enable prefill microbatch. Support [0, 1]. 0: Close prefill microbatch, 1: Open prefill microbatch

@@ -25,7 +25,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
   在各个节点上执行如下命令下载 cann-recipes-infer 源码。
   ```shell
   mkdir -p /home/code; cd /home/code/
-  git clone git@gitcode.com:cann/cann-recipes-infer.git
+  git clone https://gitcode.com/cann/cann-recipes-infer.git
   cd cann-recipes-infer
   ```
 ### 下载数据集

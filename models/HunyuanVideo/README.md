@@ -21,7 +21,7 @@ HunyuanVideo模型是2024年推出的一款多模态视频生成模型，提供�
 
 2. 本样例依赖的torch及torch_npu版本为2.6.0。
 
-请从[Ascend Extension for PyTorch插件](https://gitee.com/ascend/pytorch/tree/v7.2.RC1.alpha002-pytorch2.6.0)下载`v7.2.RC1.alpha002-pytorch2.6.0`源码，参考[源码编译安装](https://www.hiascend.com/document/detail/zh/Pytorch/710/configandinstg/instg/insg_0005.html)。
+请从[Ascend Extension for PyTorch插件](https://gitcode.com/Ascend/pytorch/tree/v7.2.RC1.alpha002-pytorch2.6.0)下载`v7.2.RC1.alpha002-pytorch2.6.0`源码，参考[源码编译安装](https://www.hiascend.com/document/detail/zh/Pytorch/710/configandinstg/instg/insg_0005.html)。
 
 ### 依赖安装
 

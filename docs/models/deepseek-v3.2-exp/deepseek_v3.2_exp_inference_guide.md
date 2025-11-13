@@ -279,7 +279,7 @@ W8A8C8对线性层量化数量较少，MLA线性层只量化了`q_b_proj`和`w_o
 
 ## 多流并行优化
 
-CANN提供了[多流并行](https://gitee.com/ascend/torchair/blob/master/feature/多流并发.md)的机制，可支持计算/通信并行等。由于A3芯片为CV分离架构，也可支持Cube/Vector并行。
+CANN提供了[多流并行](https://gitcode.com/Ascend/torchair/blob/master/feature/多流并发.md)的机制，可支持计算/通信并行等。由于A3芯片为CV分离架构，也可支持Cube/Vector并行。
 
 针对MoE模型，可利用CANN的多流并行能力，提高芯片资源利用率。MoE模块中，路由专家采用EP部署，共享专家采用DP部署。共享专家的计算与路由专家的Gating、Dispatch、计算没有依赖关系，可以通过多流并行机制来使二者流水掩盖。由于Gating函数的权重较小，且Dispatch算子为通信算子，二者的HBM带宽占用率比较低，可以与共享专家（带宽瓶颈）进行并发，掩盖掉共享专家的耗时。
 

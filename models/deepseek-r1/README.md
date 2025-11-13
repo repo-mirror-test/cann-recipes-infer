@@ -28,8 +28,8 @@ DeepSeek-R1和Kimi-K2都是2025年开源的大语言模型，二者结构类似�
     git clone https://gitcode.com/cann/cann-recipes-infer.git
 
     # 安装依赖的python库，仅支持python 3.11
-    cd cann-recipes-infer/models/deepseek-r1
-    pip3 install -r requirements.txt
+    cd cann-recipes-infer
+    pip3 install -r ./models/deepseek-r1/requirements.txt
     ```
 
 4. 配置样例运行所需环境信息。

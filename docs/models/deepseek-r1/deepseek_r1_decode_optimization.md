@@ -4,7 +4,7 @@
 
 ## 性能优化
 ### 通用优化
-DeepSeek-R1结构中的非MoE部分与Llama类似，通用优化点可参考[Llama](https://gitee.com/ascend/torchair/tree/master/npu_tuned_model/llm/llama)的改动，如固定KV Cache大小、cos/sin优化、AddRMSNorm融合、全量优化LM Head计算量等。
+DeepSeek-R1结构中的非MoE部分与Llama类似，通用优化点可参考[Llama](https://gitcode.com/Ascend/torchair/tree/master/npu_tuned_model/llm/llama)的改动，如固定KV Cache大小、cos/sin优化、AddRMSNorm融合、全量优化LM Head计算量等。
 
 ### MLA (Multi-Head Latent Attention)低秩压缩优化
 #### 使能融合算子

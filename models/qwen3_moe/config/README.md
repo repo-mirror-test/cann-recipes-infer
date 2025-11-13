@@ -8,7 +8,6 @@ Basic Config
   world_size: 128                                   # The world size. Int type
 
 Model Config
-  tokenizer_mode: default         # Support ["default", "chat"]
   with_ckpt: True                 # Whether load ckpt. Support [False, True]
   enable_profiler: True           # Whether enable profiling. Support [False, True]
   enable_cache_compile: False     # Whether enable cache compile for better performance. Support [False, True]
