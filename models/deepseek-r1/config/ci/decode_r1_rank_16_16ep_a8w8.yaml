@@ -23,7 +23,7 @@ model_config:
 
 data_config:
   dataset: "LongBench"                # ["default", "LongBench"]
-  input_max_len: 64
+  input_max_len: 128
   max_new_tokens: 100
   batch_size: 64
 
