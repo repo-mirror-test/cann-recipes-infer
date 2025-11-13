@@ -909,8 +909,9 @@ class DeepseekAttention(nn.Module):
         )
         # query_states is tuple(q_nope,q_pe) q_nope shape: [B,S,N,D], key_states: [B,S,1,D]
         bsz, q_len, _, _ = query_states[0].shape
-        actual_seq_qlen = torch.tensor([q_len + i * q_len for i in range(bsz)], dtype=torch.int32).npu()
+        actual_seq_qlen = actual_seq_lengths_q
         if is_prefill:
+            actual_seq_qlen = torch.tensor([q_len + i * q_len for i in range(bsz)], dtype=torch.int32).npu()
             actual_seq_lengths_kv = torch.tensor([q_len for _ in range(bsz)], dtype=torch.int32).npu()
         attn_output = self.attn_func(
             query_states=query_states, key_states=key_states,
@@ -1018,7 +1019,7 @@ class DeepseekAttention(nn.Module):
             "cache_index": mla_prolog_slot_mapping.view(-1),
             "rmsnorm_epsilon_cq": self.q_a_layernorm.variance_epsilon,
             "rmsnorm_epsilon_ckv": self.kv_a_layernorm.variance_epsilon,
-            "cache_mode": "PA_BSND",
+            "cache_mode": "PA_NZ",
             "query_norm_flag": True,
             "weight_quant_mode": 0
         }
@@ -1088,7 +1089,7 @@ class DeepseekAttention(nn.Module):
             "cache_index": slot_mapping.view(-1),
             "rmsnorm_epsilon_cq": self.q_a_layernorm.variance_epsilon,
             "rmsnorm_epsilon_ckv": self.kv_a_layernorm.variance_epsilon,
-            "cache_mode": "PA_BSND",
+            "cache_mode": "PA_NZ",
             "query_norm_flag": True,
             "weight_quant_mode": 0
         }
@@ -1153,9 +1154,11 @@ class DeepseekAttention(nn.Module):
         q_pe = q_pe.contiguous().view(bsz*q_len, num_heads, -1) # B,S,N,D -> B*S,N,D
         block_table = self.prefill_block_table if is_prefill else self.block_table
 
-        block_num, kv_num, block_size, dim = k_nope.shape
-        k_nope = k_nope.view(block_num, block_size, kv_num, dim)
-        k_pe = k_pe.view(block_num, block_size, kv_num, -1)
+        # adapter nz
+        block_num, block_size, kv_num, dim = k_nope.shape
+        KV_CACHE_NZ_DIM = 16
+        k_nope = k_nope.view(block_num, kv_num, self.kv_lora_rank // KV_CACHE_NZ_DIM, block_size, KV_CACHE_NZ_DIM)
+        k_pe = k_pe.view(block_num, kv_num, self.qk_rope_head_dim // KV_CACHE_NZ_DIM, block_size, KV_CACHE_NZ_DIM)
 
         fa_input_kwargs = {
             "query": q_nope,
