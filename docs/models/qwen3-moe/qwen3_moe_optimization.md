@@ -56,10 +56,10 @@
 
 ```python
 if self.enable_cache_compile:
-            case_name = "compile_cache/" + os.getenv("CASE_NAME")
-            cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), case_name)
-            self.model.decode = tng.inference.cache_compile(self.model.decode, cache_dir=cache_dir, 
-                                config=compiler_config, dynamic=True, fullgraph=True, ge_cache=True)
+    case_name = "compile_cache/" + os.getenv("CASE_NAME")
+    cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), case_name)
+    self.model.decode = tng.inference.cache_compile(self.model.decode, cache_dir=cache_dir, 
+                    config=compiler_config, dynamic=True, fullgraph=True, ge_cache=True)
 ```
 缓存默认路径为`./compile_cache/CASE_NAME`。
 
@@ -70,4 +70,4 @@ if self.enable_cache_compile:
 export HCCL_OP_EXPANSION_MODE=AIV
 ```
 ## 附录
-[环境部署以及样例执行](../../../models/qwen3_moe/README.md)
+[环境部署以及样例执行](../../../models/qwen3-moe/README.md)
