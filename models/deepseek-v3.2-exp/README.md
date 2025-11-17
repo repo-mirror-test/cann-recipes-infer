@@ -104,7 +104,9 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
   ```
   # BF16
   model_path: "/data/models/DeepSeek-V3.2-Exp-Bfloat16"
-  # Int8
+  # W8A8C16
+  model_path: "/data/models/DeepSeek-V3.2-Exp-W8A8C16"
+  # W8A8C8
   model_path: "/data/models/DeepSeek-V3.2-Exp-W8A8C8"
   ```
 
@@ -112,14 +114,14 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
 
   ```
   # BF16 prefill
-  export YAML_FILE_NAME=deepseek_v3.2_exp_rank_64_64ep_prefill.yaml
+  export YAML_FILE_NAME=deepseek_v3.2_exp_rank_64_64ep_prefill_benchmark.yaml
   # BF16 decode
-  export YAML_FILE_NAME=deepseek_v3.2_exp_rank_128_128ep_decode.yaml
+  export YAML_FILE_NAME=deepseek_v3.2_exp_rank_128_128ep_decode_benchmark.yaml
   
-  # Int8 prefill
-  export YAML_FILE_NAME=deepseek_v3.2_exp_rank_64_64ep_prefill_w8a8c8.yaml
-  # Int8 decode
-  export YAML_FILE_NAME=deepseek_v3.2_exp_rank_128_128ep_decode_w8a8c8.yaml
+  # W8A8C8 prefill
+  export YAML_FILE_NAME=deepseek_v3.2_exp_rank_64_64ep_w8a8c8_prefill_benchmark.yaml
+  # W8A8C8 decode
+  export YAML_FILE_NAME=deepseek_v3.2_exp_rank_128_128ep_w8a8c8_decode_benchmark.yaml
   ```
 
   > **Note**: 本样例BF16场景Prefill支持32-128卡，Decode支持32-128卡，Int8场景Prefill支持8-128卡，Decode支持8-128卡，可分别在config下的yaml文件中修改world_size配置。

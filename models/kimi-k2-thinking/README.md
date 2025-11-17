@@ -89,9 +89,9 @@
 
   ```
   # prefill
-  export YAML_FILE_NAME=kimi_k2_thinking_rank_64_64ep_prefill.yaml
+  export YAML_FILE_NAME=kimi_k2_thinking_rank_64_64ep_prefill_benchmark.yaml
   # decode
-  export YAML_FILE_NAME=kimi_k2_thinking_rank_128_128ep_decode.yaml
+  export YAML_FILE_NAME=kimi_k2_thinking_rank_128_128ep_decode_benchmark.yaml
   ```
   
   > **Note**: 本样例Prefill支持8-192卡，Decode支持8-192卡，可分别在config下的yaml文件中修改world_size配置。
