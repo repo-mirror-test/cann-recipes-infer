@@ -14,7 +14,7 @@ source function.sh
 check_launch
 
 export YAML_PARENT_PATH=config
-export YAML_FILE_NAME=kimi_k2_thinking_rank_64_64ep_prefill.yaml
+export YAML_FILE_NAME=kimi_k2_thinking_rank_64_64ep_prefill_benchmark.yaml
 export YAML=${YAML_PARENT_PATH}/${YAML_FILE_NAME}
 
 get_rank

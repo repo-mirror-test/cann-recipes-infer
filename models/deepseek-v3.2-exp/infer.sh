@@ -14,7 +14,7 @@ source function.sh
 check_launch
 
 export YAML_PARENT_PATH=config
-export YAML_FILE_NAME=deepseek_v3.2_exp_rank_64_64ep_prefill_w8a8c8_benchmark.yaml
+export YAML_FILE_NAME=deepseek_v3.2_exp_rank_64_64ep_w8a8c8_prefill_benchmark.yaml
 export YAML=${YAML_PARENT_PATH}/${YAML_FILE_NAME}
 
 get_rank
