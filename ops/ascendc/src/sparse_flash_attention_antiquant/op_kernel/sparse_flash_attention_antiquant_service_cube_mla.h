@@ -155,6 +155,7 @@ private:
     static constexpr uint32_t M_SPLIT_SIZE = 128;     // m方向切分
     static constexpr uint32_t N_SPLIT_SIZE = 128;     // n方向切分
     static constexpr uint32_t N_WORKSPACE_SIZE = 512; // n方向切分
+    static constexpr uint32_t K_SPLIT_SIZE = 288; // k方向切分
 
     static constexpr uint32_t L1_BLOCK_SIZE = (64 * (512 + 64) * sizeof(Q_T));
     static constexpr uint32_t L1_BLOCK_OFFSET = 64 * (512 + 64); // 72K的元素个数
@@ -673,7 +674,7 @@ __aicore__ inline void SFAAMatmulService<SFAAT>::ComputeMm1(const RunInfo &info,
                 SetFlag<HardEvent::MTE2_MTE1>(mte21KVIds[kb]);
                 WaitFlag<HardEvent::MTE2_MTE1>(mte21KVIds[kb]);
 
-                aL1Tensor = l1QPTensor[(ka + kL1) * L1_BLOCK_OFFSET];
+                aL1Tensor = l1QPTensor[ka * L1_BLOCK_OFFSET + kL1 * mL1SizeAlign * K_SPLIT_SIZE];
                 for (uint32_t kL0 = 0; kL0 < kL0Loops; kL0++) {
                     WaitFlag<HardEvent::M_MTE1>(Mte1MmABEventId(abL0BufIter % 2));
                     LocalTensor<K_ROPE_T> aL0Tensor = aL0TensorPingPong[(abL0BufIter % 2) * (L0A_PP_SIZE /

@@ -136,6 +136,7 @@ private:
     static constexpr uint32_t SOFTMAX_TMP_BUFFER_OFFSET = ConstInfo::BUFFER_SIZE_BYTE_512B / sizeof(T);
     static constexpr uint32_t BASE_BLOCK_MAX_ELEMENT_NUM = ConstInfo::BUFFER_SIZE_BYTE_32K / sizeof(T);  // 32768/4=8096
     static constexpr uint32_t BLOCK_ELEMENT_NUM = BYTE_BLOCK / sizeof(T);                                // 32/4=8
+    static constexpr uint32_t LIMIT_DEAL_ROW = 16U;
     static constexpr T FLOAT_E_SCALAR = 8388608;
     static constexpr T LN2 = 0.6931471805599453094172;
     static constexpr T RECIP_OF_LN2 = 1 / LN2;
@@ -200,7 +201,7 @@ template <typename SFAAT> __aicore__ inline void SFAAVectorService<SFAAT>::InitB
     pipe->InitBuffer(outputBuff2, ConstInfo::BUFFER_SIZE_BYTE_4K);
 
     pipe->InitBuffer(tmpBuff1, ConstInfo::BUFFER_SIZE_BYTE_32K);
-    pipe->InitBuffer(tmpBuff2, ConstInfo::BUFFER_SIZE_BYTE_4K);
+    pipe->InitBuffer(tmpBuff2, ConstInfo::BUFFER_SIZE_BYTE_8K);
     pipe->InitBuffer(v0ValidSizeBuff, ConstInfo::BUFFER_SIZE_BYTE_8K);
 
     pipe->InitBuffer(softmaxMaxBuff, ConstInfo::BUFFER_SIZE_BYTE_512B * constInfo.preLoadNum);
@@ -559,6 +560,10 @@ __aicore__ inline void SFAAVectorService<SFAAT>::GetRealS2Idx(int64_t s2GmOffset
                                                               int64_t topkGmBaseOffset, const RunInfo &runInfo)
 {
     int64_t topkGmIdx = (s2GmOffset + runInfo.s2Idx * constInfo.s2BaseSize) / constInfo.sparseBlockSize;
+    if (unlikely(topkGmIdx >= constInfo.sparseBlockCount)) {
+        realS2Idx = -1;
+        return;
+    }
     realS2Idx = topkGm_.GetValue(topkGmBaseOffset + topkGmIdx) * static_cast<int64_t>(constInfo.sparseBlockSize) +
                 static_cast<int64_t>((s2GmOffset + runInfo.s2Idx * constInfo.s2BaseSize) % constInfo.sparseBlockSize);
 }
@@ -598,7 +603,7 @@ SFAAVectorService<SFAAT>::CopyInSingleKv(int64_t &mte2Size, int64_t mte3Size, in
         (realS2Idx + constInfo.sparseBlockSize > s2IdLimit ? s2IdLimit - realS2Idx : constInfo.sparseBlockSize);
     DataCopyExtParams intriParams;
     
-    intriParams.blockCount = 1;
+    intriParams.blockCount = validS2Count;
     intriParams.dstStride = 0;
     intriParams.srcStride = 0;
     DataCopyPadExtParams<KV_T> padParams;
@@ -606,7 +611,7 @@ SFAAVectorService<SFAAT>::CopyInSingleKv(int64_t &mte2Size, int64_t mte3Size, in
     if (constInfo.quantScaleRepoMode == QUANT_SCALE_REPO_MODE::COMBINE) {
         uint32_t combineBytes = (constInfo.headDim * sizeof(KV_T) + constInfo.headDimRope * sizeof(K_ROPE_T) +
             constInfo.headDim / constInfo.tileSize * sizeof(T));
-        intriParams.blockLen = validS2Count * combineBytes;
+        intriParams.blockLen = combineBytes;
         uint32_t combineDim = combineBytes / sizeof(KV_T);
         uint32_t combineDimAlign = CeilAlign(combineBytes, ConstInfo::BUFFER_SIZE_BYTE_32B) / sizeof(KV_T);
         padParams.isPad = true;
@@ -644,7 +649,8 @@ __aicore__ inline void SFAAVectorService<SFAAT>::CopyInKv(int64_t &mte2Size, int
     int64_t keySrcStride = sparseBlockSrcStride * combineBytes;
     if (unlikely(keySrcStride >= INT32_MAX || keySrcStride < 0 ||
         realS2Idx1 + constInfo.sparseBlockSize >= s2IdLimit ||
-        realS2Idx2 + constInfo.sparseBlockSize >= s2IdLimit)) {
+        realS2Idx2 + constInfo.sparseBlockSize >= s2IdLimit) ||
+        constInfo.sparseBlockSize > 1) {
         // stride溢出、stride为负数、s2超长等异常场景，还原成2条搬运指令
         CopyInSingleKv(mte2Size, mte3Size, mergeMte3Idx, realS2Idx1, keyBNBOffset1, s2IdLimit, runInfo);
         CopyInSingleKv(mte2Size, mte3Size, mergeMte3Idx, realS2Idx2, keyBNBOffset2, s2IdLimit, runInfo);
@@ -688,7 +694,6 @@ __aicore__ inline void SFAAVectorService<SFAAT>::CopyOutMrgeResult(int64_t mte2S
     SetFlag<AscendC::HardEvent::MTE2_V>(0);
     WaitFlag<AscendC::HardEvent::MTE2_V>(0);
     LocalTensor<half> kvTensorAsFp16 = tmpBuff1.Get<half>();
-    kvTensorAsFp16 = kvTensorAsFp16[ConstInfo::BUFFER_SIZE_BYTE_16K / sizeof(half)];
     uint64_t mask = ConstInfo::BUFFER_SIZE_BYTE_256B / sizeof(half);
     LocalTensor<KV_T> srcTensor = kvMergUb_[mergeMte3Idx % 2 * INPUT1_BUFFER_OFFSET / sizeof(KV_T)];
     if (dealRow == 1) {
@@ -701,10 +706,6 @@ __aicore__ inline void SFAAVectorService<SFAAT>::CopyOutMrgeResult(int64_t mte2S
         Cast(kvTensorAsFp16[384], srcTensor[384], RoundMode::CAST_NONE, mask, repeatTimes, {1, 1, 32, 21});
     }
     PipeBarrier<PIPE_V>();
-    LocalTensor<T> kvTensorAsFp32 = tmpBuff1.Get<T>();
-    Cast(kvTensorAsFp32, kvTensorAsFp16, RoundMode::CAST_NONE, static_cast<uint32_t>(dealRow * constInfo.headDim));
-    PipeBarrier<PIPE_V>();
-
     LocalTensor<T> antiQuantScale = tmpBuff2.Get<T>();
     LocalTensor<T> oriQuantScaleTensor = srcTensor[640].template ReinterpretCast<T>();
     if (dealRow == 1) {
@@ -716,27 +717,39 @@ __aicore__ inline void SFAAVectorService<SFAAT>::CopyOutMrgeResult(int64_t mte2S
         params.srcStride = (constInfo.headDim * sizeof(KV_T) + constInfo.headDimRope * sizeof(K_ROPE_T)) /
             ConstInfo::BUFFER_SIZE_BYTE_32B;
         params.dstStride = 0;
-        LocalTensor<T> tmpAntiQuantScale = antiQuantScale[ConstInfo::BUFFER_SIZE_BYTE_16K / sizeof(T)];
+        LocalTensor<T> tmpAntiQuantScale = antiQuantScale[ConstInfo::BUFFER_SIZE_BYTE_1K];
         DataCopy(tmpAntiQuantScale, oriQuantScaleTensor, params);
         PipeBarrier<PIPE_V>();
         Brcb(antiQuantScale, tmpAntiQuantScale, dealRow, {1, 4});
     }
     PipeBarrier<PIPE_V>();
-
-    for (int i = 0; i < constInfo.tileSize / FP32_REPEAT_ELEMENT_NUM; i++) {
-        Mul(kvTensorAsFp32[i * FP32_REPEAT_ELEMENT_NUM], kvTensorAsFp32[i * FP32_REPEAT_ELEMENT_NUM], antiQuantScale,
-            FP32_REPEAT_ELEMENT_NUM, 4 * dealRow, {1, 1, 0, 16, 16, 1});
+    uint32_t dealLoop = CeilDiv(dealRow, LIMIT_DEAL_ROW);
+    uint32_t dealRowFp32 = LIMIT_DEAL_ROW;
+    uint32_t element = LIMIT_DEAL_ROW * constInfo.headDim;
+    LocalTensor<T> kvTensorAsFp32 = inputBuff2.Get<T>();
+    LocalTensor<K_ROPE_T> antiKvTensorAsB16 = tmpBuff1.Get<K_ROPE_T>();
+    for (uint32_t i = 0; i < dealLoop; i++) {
+        if (i == dealLoop - 1) {
+            dealRowFp32 = dealRow - i * LIMIT_DEAL_ROW;
+        }
+        Cast(kvTensorAsFp32, kvTensorAsFp16[i * element], RoundMode::CAST_NONE,
+            static_cast<uint32_t>(dealRowFp32 * constInfo.headDim));
+        PipeBarrier<PIPE_V>();
+        for (uint32_t j = 0; j < constInfo.tileSize / FP32_REPEAT_ELEMENT_NUM; j++) {
+            Mul(kvTensorAsFp32[j * FP32_REPEAT_ELEMENT_NUM], kvTensorAsFp32[j * FP32_REPEAT_ELEMENT_NUM],
+                antiQuantScale[i * LIMIT_DEAL_ROW * 32],
+                FP32_REPEAT_ELEMENT_NUM, 4 * dealRowFp32, {1, 1, 0, 16, 16, 1});
+        }
+        PipeBarrier<PIPE_V>();
+        if constexpr (IsSameType<K_ROPE_T, bfloat16_t>::value) { // bf16 采取四舍六入五成双模式
+            Cast(antiKvTensorAsB16[i * element], kvTensorAsFp32, RoundMode::CAST_RINT,
+                static_cast<uint32_t>(dealRowFp32 * constInfo.headDim));
+        } else {
+            Cast(antiKvTensorAsB16[i * element], kvTensorAsFp32, RoundMode::CAST_ROUND,
+                static_cast<uint32_t>(dealRowFp32 * constInfo.headDim));
+        }
+        PipeBarrier<PIPE_V>();
     }
-    PipeBarrier<PIPE_V>();
-    LocalTensor<K_ROPE_T> antiKvTensorAsB16 = kvTensorAsFp32.template ReinterpretCast<K_ROPE_T>();
-    if constexpr (IsSameType<K_ROPE_T, bfloat16_t>::value) { // bf16 采取四舍六入五成双模式
-        Cast(antiKvTensorAsB16, kvTensorAsFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(dealRow *
-             constInfo.headDim));
-    } else {
-        Cast(antiKvTensorAsB16, kvTensorAsFp32, RoundMode::CAST_ROUND, static_cast<uint32_t>(dealRow *
-             constInfo.headDim));
-    }
-    PipeBarrier<PIPE_V>();
 
     LocalTensor<K_ROPE_T> antiKvTensorAsB16Nz = outputBuff1.Get<K_ROPE_T>();
     WaitFlag<AscendC::HardEvent::MTE3_V>(SYNC_OUTPUT_BUF1_FLAG);
@@ -821,7 +834,7 @@ __aicore__ inline void SFAAVectorService<SFAAT>::MergeKv(const RunInfo &runInfo)
         }
         GetRealS2Idx(s2GmOffsetArray + constInfo.sparseBlockSize, s2IdxArray1, topkGmBaseOffset, runInfo);
         CopyInKv(mte2Size, mte3Size, mergeMte3Idx, s2IdxArray0, s2IdxArray1, runInfo);
-        if ((mte2Size - mte3Size + 2 * constInfo.sparseBlockSize > 16) ||
+        if ((mte2Size - mte3Size + 2 * constInfo.sparseBlockSize > 32) ||
             s2GmOffsetArray + 2 * constInfo.sparseBlockSize >= s2GmLimit) {
             CopyOutMrgeResult(mte2Size, mte3Size, s2GmStartOffset, mergeMte3Idx, runInfo);
             mte3Size = mte2Size;

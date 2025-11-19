@@ -683,8 +683,8 @@ ge::graphStatus SFAATilingCheck::CheckSingleParaSparseMode() const
 
 ge::graphStatus SFAATilingCheck::CheckSingleParaSparseBlockSize() const
 {
-    OPS_ERR_IF((*opParamInfo_.sparseBlockSize <= 0),
-        OPS_LOG_E(opName_, "sparseBlockSize should be greater than 0, but got: %ld.", *opParamInfo_.sparseBlockSize),
+    OPS_ERR_IF((*opParamInfo_.sparseBlockSize <= 0 || *opParamInfo_.sparseBlockSize > 16),
+        OPS_LOG_E(opName_, "sparseBlockSize should be in range [1, 16], but got: %ld.", *opParamInfo_.sparseBlockSize),
         return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
