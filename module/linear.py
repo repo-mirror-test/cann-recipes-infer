@@ -18,15 +18,18 @@
 
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Union, List, Sequence
+from typing import Optional, Union, List, Sequence, Tuple
 
 import torch
 import torch.nn as nn
 from torch.nn import Parameter
 import torch_npu
 from transformers.activations import ACT2FN
+from transformers.utils import logging
+
 from module.quantization import QuantizeMethodBase, QuantizationConfig
 from .utils import (divide, set_weight_attrs)
+logger = logging.get_logger(__name__)
 
 
 def split_tensor_along_last_dim(
@@ -585,10 +588,6 @@ class MergedColumnParallelLinear(LinearBase):
         if loaded_shard_id is None:
             # Loaded weight is already fused on disk (qkv/mlp).
             if output_dim is None:
-                if needs_scalar_to_array:
-                    param_data, loaded_weight = adjust_scalar_to_fused_array(
-                        param_data, loaded_weight, 0)
-
                 if param_data.shape != loaded_weight.shape:
                     raise RuntimeError("param_data.shape != loaded_weight.shape")
                 param_data.copy_(loaded_weight)
@@ -640,11 +639,6 @@ class MergedColumnParallelLinear(LinearBase):
             if not use_bitsandbytes_4bit:
                 loaded_weight = loaded_weight.narrow(output_dim, start_idx,
                                                      shard_size)
-
-        # Special case for per-tensor scales in fused case.
-        elif needs_scalar_to_array:
-            param_data, loaded_weight = adjust_scalar_to_fused_array(
-                param_data, loaded_weight, loaded_shard_id)
 
         else:
             ignore_warning = getattr(param, "ignore_warning", False)
@@ -978,7 +972,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         self.output_sizes = [
             self.num_heads * self.head_size * tp_size,  # q_proj
             self.num_kv_heads * self.head_size * tp_size,  # k_proj
-            self.num_kv_heads * self.head_size * tp_size,  # v_proj 
+            self.num_kv_heads * self.head_size * tp_size,  # v_proj
         ]
 
         super().__init__(input_size=input_size,
@@ -1007,10 +1001,6 @@ class QKVParallelLinear(ColumnParallelLinear):
             # Loaded weight is already fused on disk (qkv).
             # (e.g., Phi-3's qkv_proj).
             if output_dim is None:
-                if needs_scalar_to_array:
-                    param_data, loaded_weight = adjust_scalar_to_fused_array(
-                        param_data, loaded_weight, 0)
-
                 assert param_data.shape == loaded_weight.shape
                 param_data.copy_(loaded_weight)
                 return
@@ -1031,10 +1021,6 @@ class QKVParallelLinear(ColumnParallelLinear):
                 if packed_dim == output_dim:
                     shard_size = shard_size // param.pack_factor
                     shard_offset = shard_offset // param.pack_factor
-
-                    # Special case for Marlin.
-                    shard_size, shard_offset = adjust_marlin_shard(
-                        param, shard_size, shard_offset)
 
                 loaded_weight_shard = loaded_weight.narrow(
                     output_dim, shard_offset, shard_size)
@@ -1060,10 +1046,6 @@ class QKVParallelLinear(ColumnParallelLinear):
                 shard_size = shard_size // param.pack_factor
                 shard_offset = shard_offset // param.pack_factor
 
-                # Special case for Marlin.
-                shard_size, shard_offset = adjust_marlin_shard(
-                    param, shard_size, shard_offset)
-
             is_sharded_weight = getattr(param, "is_sharded_weight", False)
             # no need to narrow
             is_sharded_weight = is_sharded_weight
@@ -1080,10 +1062,6 @@ class QKVParallelLinear(ColumnParallelLinear):
                 loaded_weight = loaded_weight.narrow(output_dim, start_idx,
                                                      shard_size)
 
-        # Special case for per-tensor scales in fused case.
-        elif needs_scalar_to_array:
-            param_data, loaded_weight = adjust_scalar_to_fused_array(
-                param_data, loaded_weight, loaded_shard_id)
         else:
             ignore_warning = getattr(param, "ignore_warning", False)
             if not ignore_warning:
