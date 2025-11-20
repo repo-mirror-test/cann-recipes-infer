@@ -83,7 +83,7 @@ static ge::graphStatus InferDataTypeLightningIndexer(gert::InferDataTypeContext 
                return ge::GRAPH_FAILED);
     OPS_LOG_D(context->GetNodeName(), "Enter LightningIndexer InferDataType impl.");
     // default set q's dtype as fia's output type
-    ge::DataType outputType = context->GetInputDataType(ge::DT_INT32);
+    ge::DataType outputType = ge::DT_INT32;
     // attention_out, outidx:0
     context->SetOutputDataType(0, outputType);
     OPS_LOG_D(context->GetNodeName(), "LightningIndexer InferDataType end.");
