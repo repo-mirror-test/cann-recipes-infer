@@ -396,7 +396,7 @@ def do_golden_gen(batch_size, seq_length, head_num, select_topk, select_k_rope, 
 # 1. 比较两个golden的输出 out_host:有序的topk的输出  out:无序的topk的输出
 def compare_out_of_order(batch_size, seq_length, select_topk, full_q_actual_seqs, full_kv_actual_seqs,
                          selection_topk_block_sizes, select_topk_indices, s_max_block_nums, s_block_sizes,
-                         out_hosts, output, lay_out):
+                         out_hosts, output, lay_out, if_quant=False):
     select_kv_block_status = output[3]
     if lay_out == 'TND':
         select_topk_indices = select_topk_indices.reshape(
@@ -450,10 +450,13 @@ def compare_out_of_order(batch_size, seq_length, select_topk, full_q_actual_seqs
                 obs_t_offset = insert_idx * selection_topk_block_sizes
                 obs_s_bn = obs_t_offset // s_block_sizes
                 obs_s_bs = obs_t_offset % s_block_sizes
-                out_k_rope = output[0][obs_s_bn + s_bn_batch][obs_s_bs:obs_s_bs + cu_block_size]
+                if not if_quant:
+                    out_k_rope = output[0][obs_s_bn + s_bn_batch][obs_s_bs:obs_s_bs + cu_block_size]
+                else:
+                    out_k_rope = True
                 out_kv_cache = output[1][obs_s_bn + s_bn_batch][obs_s_bs:obs_s_bs + cu_block_size]
 
-                is_equal_k_rope = (out_k_rope == out_host_k_rope).all()
+                is_equal_k_rope = (out_k_rope == out_host_k_rope).all() if not if_quant else True
                 is_equal_kv_cache = (out_kv_cache == out_host_kv_cache).all()
                 if not is_equal_k_rope or not is_equal_kv_cache:
                     assert(is_equal_k_rope)
@@ -684,8 +687,8 @@ class TestCustomGatherSelectionKvCache(TestCase):
         k_rope = 64
         kvcahce = 512
         selection_topk_block_size = 1
-        batchsize = 1
-        seq_len = 1
+        batchsize = 2
+        seq_len = 2
         headnum = 1
         selection_topk = 2048
         max_seq_len = 1024 * 16
@@ -846,6 +849,173 @@ class TestCustomGatherSelectionKvCache(TestCase):
             assert(kv_blk_s_equal)
             assert(kv_blk_seq_equ)
 
+    def test_gather_selection_kv_cache_quant_graph(self):
+        k_rope = 656
+        kvcahce = 512
+        selection_topk_block_size = 1
+        batchsize = 2
+        seq_len = 2
+        headnum = 1
+        selection_topk = 2048
+        max_seq_len = 1024 * 16
+        s_block_size = 128
+        f_block_size = 128
+        lay_out = 'BSND'  # 'TND'
+        reuse_input = False
+        is_offload = False
+
+        selection_max_seq_len = selection_topk * selection_topk_block_size
+        all_topk_num = np.arange(0, (max_seq_len + selection_topk_block_size -
+                                1) // selection_topk_block_size, dtype=np.int32)
+        
+        # 每个batch 最大blocknum
+        s_max_block_num = (selection_max_seq_len + s_block_size - 1) // s_block_size
+        f_max_block_num = (max_seq_len + f_block_size - 1) // f_block_size
+        selection_k_rope = np.random.uniform(low=0, high=127,
+            size=[s_max_block_num * batchsize * seq_len * headnum, s_block_size, k_rope]).astype(np.int8)
+        selection_kv_cache = np.random.uniform(low=0, high=127,
+            size=[s_max_block_num * batchsize * seq_len * headnum, s_block_size, kvcahce]).astype(np.int8)
+        selection_kv_block_table = np.arange(0, batchsize * seq_len * headnum * s_max_block_num).reshape(
+            batchsize * seq_len * headnum, s_max_block_num).astype(np.int32)
+        selection_kv_block_status = np.ones(
+            (batchsize, seq_len, headnum, selection_topk + 1), dtype=np.int32) * -1
+        selection_topk_indices = random_selection_topk(
+            all_topk_num, batchsize, seq_len, headnum, selection_topk)
+
+        full_k_rope = np.random.uniform(low=0, high=127,
+            size=[f_max_block_num * batchsize, f_block_size, k_rope]).astype(np.int8)
+        full_kv_cache = np.random.uniform(low=0, high=127,
+            size=[f_max_block_num * batchsize, f_block_size, kvcahce]).astype(np.int8)
+
+        full_kv_block_table = np.random.uniform(low=0, high=f_max_block_num, size=[
+                                                batchsize, f_max_block_num]).astype(np.int32)
+
+        full_kv_actual_seq = np.random.uniform(
+            low=max_seq_len, high=max_seq_len, size=[batchsize]).astype(np.int32)
+        full_q_actual_seq = np.random.uniform(
+            low=0, high=0, size=[batchsize]).astype(np.int32) + seq_len
+        
+        # 1. 产生reuse可复用的输入
+        out_for_in = do_golden_all_host(batchsize, seq_len, headnum, selection_topk, selection_k_rope,
+                                        selection_kv_cache, selection_kv_block_table,
+                                        selection_kv_block_status, selection_topk_indices, full_k_rope,
+                                        full_kv_cache, full_kv_block_table, full_kv_actual_seq,
+                                        full_q_actual_seq, selection_topk_block_size, lay_out)
+        selection_k_rope = out_for_in[0]
+        selection_kv_cache = out_for_in[1]
+        selection_kv_block_table = out_for_in[2]
+        selection_kv_block_status = out_for_in[3]
+        
+        # 2.2 控制topk复用率
+        for b in range(batchsize):
+            curvv = selection_topk_indices[b].copy()
+            useable = list(set(all_topk_num) - set(curvv.reshape(-1)))
+            for s in range(seq_len):
+                if s > 0:
+                    useable = list(
+                        set(useable) - set(selection_topk_indices[b][s - 1].copy().reshape(-1)))
+                for h in range(headnum):
+                    not_dup_num = 2048  # 2048
+                    not_dup_value = np.random.choice(
+                        useable, size=not_dup_num, replace=False)
+                    not_dup_idx = np.random.choice(
+                        np.arange(selection_topk), size=not_dup_num, replace=False)
+                    selection_topk_indices[b][s][h][not_dup_idx] = not_dup_value
+
+        if lay_out == 'TND':
+            selection_kv_block_status = selection_kv_block_status.reshape(
+                batchsize * seq_len, headnum, selection_topk + 1)
+            selection_topk_indices = selection_topk_indices.reshape(
+                batchsize * seq_len, headnum, selection_topk)
+
+        selection_k_rope_npu = torch.from_numpy(selection_k_rope.copy()).npu()
+        selection_kv_cache_npu = torch.from_numpy(selection_kv_cache.copy()).npu()
+        selection_kv_block_table_npu = torch.from_numpy(
+            selection_kv_block_table.copy()).npu()
+        selection_kv_block_status_npu = torch.from_numpy(
+            selection_kv_block_status.copy()).npu()
+        selection_topk_indices_npu = torch.from_numpy(
+            selection_topk_indices.copy()).npu()
+        full_k_rope_npu = torch.from_numpy(full_k_rope.copy()).npu()
+        full_kv_cache_npu = torch.from_numpy(full_kv_cache.copy()).npu()
+        full_kv_block_table_npu = torch.from_numpy(full_kv_block_table.copy()).npu()
+        full_kv_actual_seq_npu = torch.from_numpy(full_kv_actual_seq.copy()).npu()
+        full_q_actual_seq_npu = torch.from_numpy(full_q_actual_seq.copy()).npu()
+
+        selection_k_rope_h = selection_k_rope.copy()
+        selection_kv_cache_h = selection_kv_cache.copy()
+        selection_kv_block_table_h = selection_kv_block_table.copy()
+        selection_kv_block_status_h = selection_kv_block_status.copy()
+        selection_topk_indices_h = selection_topk_indices.copy()
+        out_host = do_golden_all_host(batchsize, seq_len, headnum, selection_topk, selection_k_rope_h,
+                                      selection_kv_cache_h, selection_kv_block_table_h,
+                                      selection_kv_block_status_h, selection_topk_indices_h, full_k_rope,
+                                      full_kv_cache, full_kv_block_table, full_kv_actual_seq,
+                                      full_q_actual_seq, selection_topk_block_size, lay_out)
+
+        if is_offload:
+            full_k_rope_npu = torch_npu.empty_with_swapped_memory(
+                full_k_rope_npu.shape, dtype=full_k_rope_npu.dtype, device=torch.device("npu:0"))
+            full_k_rope_npu.fill_(0)
+            full_k_rope_npu.add_(torch.from_numpy(full_k_rope.copy()).npu())
+
+            full_kv_cache_npu = torch_npu.empty_with_swapped_memory(
+                full_kv_cache_npu.shape, dtype=full_k_rope_npu.dtype, device=torch.device("npu:0"))
+            full_kv_cache_npu.fill_(0)
+            full_kv_cache_npu.add_(torch.from_numpy(full_kv_cache.copy()).npu())
+
+        print(f'======================== PTA graph BEGIN ========================')
+        out = do_golden_gen(batchsize, seq_len, headnum, selection_topk, selection_k_rope, selection_kv_cache,
+                            selection_kv_block_table, selection_kv_block_status, selection_topk_indices,
+                            full_k_rope, full_kv_cache, full_kv_block_table, full_kv_actual_seq, full_q_actual_seq,
+                            selection_topk_block_size, lay_out)
+        selection_k_rope_npu = torch.tensor([], dtype=torch.int8).npu()
+        full_k_rope_npu = torch.tensor([], dtype=torch.int8).npu()
+        outnpu = do_npu(selection_k_rope_npu, selection_kv_cache_npu, selection_kv_block_table_npu,
+                        selection_kv_block_status_npu, selection_topk_indices_npu, full_k_rope_npu,
+                        full_kv_cache_npu, full_kv_block_table_npu, full_kv_actual_seq_npu,
+                        full_q_actual_seq_npu, selection_topk_block_size, api_impl_mode="dynamo")
+        print(f'======================== PTA graph FINISH ========================')
+        if lay_out == 'TND':
+            selection_topk_indices = selection_topk_indices.reshape(
+                batchsize * seq_len, headnum, selection_topk)
+
+        compare_out_of_order(batchsize, seq_len, selection_topk, full_q_actual_seq, full_kv_actual_seq,
+                            selection_topk_block_size, selection_topk_indices, s_max_block_num,
+                            s_block_size, out_host, out, lay_out)
+
+        kv_blk_t_equal = (out[2] == out_host[2].reshape(out[2].shape)).all()
+        kv_blk_s_equal = (sort_with_negative_ones_last(
+            out[3]) == sort_with_negative_ones_last(out_host[3])).all()
+        kv_blk_seq_equ = (out[4] == out_host[4].reshape(out[4].shape)).all()
+        assert(kv_blk_t_equal)
+        assert(kv_blk_s_equal)
+        assert(kv_blk_seq_equ)
+
+        # 2. 比较npu和golden的输出
+        if selection_topk <= 32:
+            assert((out[0] == outnpu[0].reshape(out[0].shape)).all())
+            assert((out[1] == outnpu[1].reshape(out[1].shape)).all())
+            assert((out[2] == outnpu[2].reshape(out[2].shape)).all())
+            assert((out[3] == outnpu[3].reshape(out[3].shape)).all())
+            assert((out[4] == outnpu[4].reshape(out[4].shape)).all())
+        else:
+            compare_out_of_order(batchsize, seq_len, selection_topk, full_q_actual_seq, full_kv_actual_seq,
+                                selection_topk_block_size, selection_topk_indices, s_max_block_num, s_block_size,
+                                out_host, outnpu, lay_out, if_quant=True)
+            kv_blk_t_equal = (outnpu[2] == out_host[2].reshape(outnpu[2].shape)).all()
+            if lay_out == 'TND':
+                kv_blk_s_equal = (sort_with_negative_ones_last(
+                    outnpu[3]) == sort_with_negative_ones_last(out_host[3]).reshape(
+                        batchsize * seq_len, headnum, selection_topk + 1)).all()
+            else:
+                kv_blk_s_equal = (sort_with_negative_ones_last(
+                    outnpu[3]) == sort_with_negative_ones_last(out_host[3])).all()
+            kv_blk_seq_equ = (outnpu[4] == out_host[4].reshape(outnpu[4].shape)).all()
+            assert(kv_blk_t_equal)
+            assert(kv_blk_s_equal)
+            assert(kv_blk_seq_equ)
+            
     def test_gather_selection_kv_cache_tnd_graph(self):
         k_rope = 64
         kvcahce = 512

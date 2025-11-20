@@ -41,7 +41,8 @@ constexpr size_t CONST4 = 4;
 
 constexpr int32_t MAX_Q_SEQ_LEN = 8;
 constexpr int32_t MAX_K_ROPE_DIM = 64;
-constexpr int32_t MAX_KV_CACHE_DIM = 512;
+// 512(int8) + 64(fp16) * 2 + 4(fp32) * 4
+constexpr int32_t MAX_KV_CACHE_DIM = 656;
 constexpr int32_t MAX_TOPK_NUM = 2048;
 constexpr int32_t TOPK_SPLIT_NUM = 32;
 constexpr int64_t DEFAULT_TOPK_BLOCK_SIZE = 64;
@@ -77,7 +78,7 @@ ge::graphStatus GatherSelectionKvCacheTiling::GetPlatformInfo()
         ubSize_ <= 0, OPS_LOG_E(context_->GetNodeName(), "ubSize must be greater than 0."),
         return ge::GRAPH_FAILED);
 
-    ubBlockSize_ = 32; // 32: block size platform::GetUbBlockSize(context_);
+    ubBlockSize_ = 32; // 32: ub block size
 
     return ge::GRAPH_SUCCESS;
 }
@@ -105,37 +106,53 @@ ge::graphStatus GatherSelectionKvCacheTiling::GetSelKvCacheShape()
     OPS_ERR_IF(selKRopeIn == nullptr, OPS_LOG_E(context_->GetNodeName(), "get selKRopeIn nullptr."),
         return ge::GRAPH_FAILED);
     gert::Shape selKRopeShape = selKRopeIn->GetStorageShape();
-    size_t dimsN = selKRopeShape.GetDimNum();
+    size_t dimsNSelKRope = selKRopeShape.GetDimNum();
+    int64_t ifQuant = 0;
+
     OPS_ERR_IF(
-        (dimsN != CONST3),
-        OPS_LOG_E(context_->GetNodeName(), "selection_k_rope dim:%lu should be 3.", dimsN),
+        (dimsNSelKRope != CONST3 && dimsNSelKRope != 1),
+        OPS_LOG_E(context_->GetNodeName(), "selection_k_rope dim:%lu should be 3 or 1.", dimsNSelKRope),
         return ge::GRAPH_FAILED);
-    tilingData_.set_selKvBlockNum(selKRopeShape.GetDim(0));
-    tilingData_.set_selKvBlockSize(selKRopeShape.GetDim(1));
 
     // selection_kv_cache: [s_block_num, s_block_size, kv_cache]
     auto selKvCacheIn = context_->GetInputShape(SEL_KV_CACHE_IDX);
     OPS_ERR_IF(selKvCacheIn == nullptr, OPS_LOG_E(context_->GetNodeName(), "get selKvCacheIn nullptr."),
         return ge::GRAPH_FAILED);
     gert::Shape selKvCacheShape = selKvCacheIn->GetStorageShape();
-    dimsN = selKvCacheShape.GetDimNum();
+    size_t dimsN = selKvCacheShape.GetDimNum();
     OPS_ERR_IF(
         (dimsN != CONST3),
         OPS_LOG_E(context_->GetNodeName(), "selection_kv_cache dim:%lu should be 3.", dimsN),
         return ge::GRAPH_FAILED);
-    // selKvCacheShape selKRopeShape 前两维相同
-    OPS_ERR_IF(
-        (selKvCacheShape.GetDim(0) != selKRopeShape.GetDim(0) || selKvCacheShape.GetDim(1) != selKRopeShape.GetDim(1)),
-        OPS_LOG_E(context_->GetNodeName(),
-            "sel_kv_cache sel_k_rope dim0 [%ld %ld] or dim1 [%ld %ld] should be equal.",
-            selKvCacheShape.GetDim(0), selKRopeShape.GetDim(0), selKvCacheShape.GetDim(1), selKRopeShape.GetDim(1)),
-        return ge::GRAPH_FAILED);
-    OPS_ERR_IF(
-        (selKvCacheShape.GetDim(1) % selTopKBlockSize_ != 0),
-        OPS_LOG_E(context_->GetNodeName(), "selection_kv_cache dim1:%ld should be multiple of %ld.",
-            selKvCacheShape.GetDim(1), selTopKBlockSize_),
-        return ge::GRAPH_FAILED);
+    tilingData_.set_selKvBlockNum(selKvCacheShape.GetDim(0));
+    tilingData_.set_selKvBlockSize(selKvCacheShape.GetDim(1));
+    
+    if (dimsNSelKRope == CONST3) {
+        // selKvCacheShape selKRopeShape 前两维相同
+        OPS_ERR_IF(
+            (selKvCacheShape.GetDim(0) != selKRopeShape.GetDim(0) ||
+            selKvCacheShape.GetDim(1) != selKRopeShape.GetDim(1)),
+            OPS_LOG_E(context_->GetNodeName(),
+                "sel_kv_cache sel_k_rope dim0 [%ld %ld] or dim1 [%ld %ld] should be equal.",
+                selKvCacheShape.GetDim(0), selKRopeShape.GetDim(0), selKvCacheShape.GetDim(1), selKRopeShape.GetDim(1)),
+            return ge::GRAPH_FAILED);
+    } else {
+        OPS_ERR_IF(
+            (selKRopeShape.GetDim(0) != 0),
+            OPS_LOG_E(context_->GetNodeName(),
+                "selection_k_rope dim0:[%ld] should be 0 when the dim of selection_k_rope is 1.",
+                selKRopeShape.GetDim(0)),
+            return ge::GRAPH_FAILED);
+        ifQuant = 1;
+    }
 
+    OPS_ERR_IF(
+            (selKvCacheShape.GetDim(1) % selTopKBlockSize_ != 0),
+            OPS_LOG_E(context_->GetNodeName(), "selection_kv_cache dim1:%ld should be multiple of %ld.",
+                selKvCacheShape.GetDim(1), selTopKBlockSize_),
+            return ge::GRAPH_FAILED);
+
+    tilingData_.set_ifQuant(ifQuant);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -289,40 +306,42 @@ ge::graphStatus GatherSelectionKvCacheTiling::GetFullKvCacheShape()
     OPS_ERR_IF(fulKRopeIn == nullptr, OPS_LOG_E(context_->GetNodeName(), "get fulKRopeIn nullptr."),
         return ge::GRAPH_FAILED);
     gert::Shape fulKRopeShape = fulKRopeIn->GetStorageShape();
-    size_t dimsN = fulKRopeShape.GetDimNum();
+    size_t dimsNFullKRope = fulKRopeShape.GetDimNum();
     OPS_ERR_IF(
-        (dimsN != CONST3),
-        OPS_LOG_E(context_->GetNodeName(), "full_k_rope dim:%lu should be 3.", dimsN),
+        (dimsNFullKRope != CONST3 && dimsNFullKRope != 1),
+        OPS_LOG_E(context_->GetNodeName(), "full_k_rope dim:%lu should be 3 or 1.", dimsNFullKRope),
         return ge::GRAPH_FAILED);
-    tilingData_.set_fullKvBlockNum(fulKRopeShape.GetDim(0));
-    tilingData_.set_fullKvBlockSize(fulKRopeShape.GetDim(1));
-    tilingData_.set_kRopeDim(fulKRopeShape.GetDim(CONST2));
 
     // [f_block_num, block_size, kv_cache]
     auto fulKvCacheIn = context_->GetInputShape(FULL_KV_CACHE_IDX);
     OPS_ERR_IF(fulKvCacheIn == nullptr, OPS_LOG_E(context_->GetNodeName(), "get fulKvCacheIn nullptr."),
         return ge::GRAPH_FAILED);
     gert::Shape fulKvCacheInShape = fulKvCacheIn->GetStorageShape();
-    dimsN = fulKvCacheInShape.GetDimNum();
+    size_t dimsN = fulKvCacheInShape.GetDimNum();
+
     OPS_ERR_IF(
         (dimsN != CONST3),
         OPS_LOG_E(context_->GetNodeName(), "full_kv_cache dim:%lu should be 3.", dimsN),
         return ge::GRAPH_FAILED);
-    tilingData_.set_kvCacheDim(fulKvCacheInShape.GetDim(CONST2));
 
+    tilingData_.set_kvCacheDim(fulKvCacheInShape.GetDim(CONST2));
     // fulKvCacheInShape fulKRopeShape 前两维相同
+    if (dimsNFullKRope == CONST3) {
+        OPS_ERR_IF(
+            (fulKvCacheInShape.GetDim(0) != fulKRopeShape.GetDim(0) ||
+            fulKvCacheInShape.GetDim(1) != fulKRopeShape.GetDim(1)),
+            OPS_LOG_E(context_->GetNodeName(),
+                "ful_kv_cache ful_k_rope dim0 [%ld %ld] or dim1 [%ld %ld] should be equal.",
+                fulKvCacheInShape.GetDim(0),
+                fulKRopeShape.GetDim(0), fulKvCacheInShape.GetDim(1), fulKRopeShape.GetDim(1)),
+            return ge::GRAPH_FAILED);
+    }
+    
     OPS_ERR_IF(
-        (fulKvCacheInShape.GetDim(0) != fulKRopeShape.GetDim(0) ||
-        fulKvCacheInShape.GetDim(1) != fulKRopeShape.GetDim(1)),
-        OPS_LOG_E(context_->GetNodeName(),
-            "ful_kv_cache ful_k_rope dim0 [%ld %ld] or dim1 [%ld %ld] should be equal.", fulKvCacheInShape.GetDim(0),
-            fulKRopeShape.GetDim(0), fulKvCacheInShape.GetDim(1), fulKRopeShape.GetDim(1)),
-        return ge::GRAPH_FAILED);
-    OPS_ERR_IF(
-        (fulKvCacheInShape.GetDim(1) % selTopKBlockSize_ != 0),
-        OPS_LOG_E(context_->GetNodeName(), "full_kv_cache dim1:%ld should be multiple of %ld.",
-            fulKvCacheInShape.GetDim(1), selTopKBlockSize_),
-        return ge::GRAPH_FAILED);
+            (fulKvCacheInShape.GetDim(1) % selTopKBlockSize_ != 0),
+            OPS_LOG_E(context_->GetNodeName(), "full_kv_cache dim1:%ld should be multiple of %ld.",
+                fulKvCacheInShape.GetDim(1), selTopKBlockSize_),
+            return ge::GRAPH_FAILED);
 
     OPS_ERR_IF(
         (tilingData_.get_kRopeDim() > MAX_K_ROPE_DIM || tilingData_.get_kvCacheDim() > MAX_KV_CACHE_DIM),
@@ -330,6 +349,22 @@ ge::graphStatus GatherSelectionKvCacheTiling::GetFullKvCacheShape()
             "kRopeDim:%ld should <= %d and kvCacheDim:%ld should <= %d.",
             tilingData_.get_kRopeDim(), MAX_K_ROPE_DIM, tilingData_.get_kvCacheDim(), MAX_KV_CACHE_DIM),
         return ge::GRAPH_FAILED);
+    
+    if (dimsNFullKRope == CONST3) {
+        tilingData_.set_fullKvBlockNum(fulKRopeShape.GetDim(0));
+        tilingData_.set_fullKvBlockSize(fulKRopeShape.GetDim(1));
+        tilingData_.set_kRopeDim(fulKRopeShape.GetDim(CONST2));
+    } else {
+        tilingData_.set_fullKvBlockNum(fulKvCacheInShape.GetDim(0));
+        tilingData_.set_fullKvBlockSize(fulKvCacheInShape.GetDim(1));
+        tilingData_.set_kRopeDim(0);
+
+        OPS_ERR_IF(
+            (fulKRopeShape.GetDim(0) != 0),
+            OPS_LOG_E(context_->GetNodeName(),
+                "full_k_rope dim0: [%ld] should be 0 when the dim of full_k_rope is 1.", fulKRopeShape.GetDim(0)),
+            return ge::GRAPH_FAILED);
+    }
 
     return ge::GRAPH_SUCCESS;
 }
@@ -459,7 +494,7 @@ ge::graphStatus GatherSelectionKvCacheTiling::GetInputDtypeInfo()
         return ge::GRAPH_FAILED);
     selKRopeDtype_ = selKRopeDesc->GetDataType();
     OPS_ERR_IF(
-        (selKRopeDtype_ != ge::DT_FLOAT16 && selKRopeDtype_ != ge::DT_BF16),
+        (selKRopeDtype_ != ge::DT_FLOAT16 && selKRopeDtype_ != ge::DT_BF16 && selKRopeDtype_ != ge::DT_INT8),
         OPS_LOG_E(context_->GetNodeName(), "selKRopeDtype_ is not supported."),
         return ge::GRAPH_FAILED);
 
@@ -570,8 +605,6 @@ ge::graphStatus GatherSelectionKvCacheTiling::DoOpTiling()
             seq_, headnum_, topk_, tilingData_.get_selMaxBlockNum()),
         return ge::GRAPH_FAILED);
 
-    // 判断 krope和kvcache是否可以开db
-    // 如果要在ub内倒换,将最大的topk换到最后面,则必须满足开db的条件. 如果krope和kvcache较大,后续要通过workspace倒换
     if ((kRopeUbSize + kvCacheUbSize) * CONST2 <=
             (ubSize_ - selTopKUb - topkStatUb - selKvBlockTabUbSize - selKvSeqLenUbSize)) {
         tilingData_.set_buffNum(CONST2);

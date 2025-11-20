@@ -564,9 +564,7 @@ private:
         int64_t curBatchSize = (blkIdx_ * tiling_->mainCoreBsLoopNum + bsIdx) / rawSeq_;
         int32_t kvBlockNumIdx = fullKvBlockTableGm_.GetValue(curBatchSize * tiling_->fullMaxBlockNum + kvBlockTableIdx);
         ASSERT_MSG(kvBlockNumIdx >= 0, "kvBlockTableIdx:%ld should be greater than 0", kvBlockNumIdx);
-        ASSERT_MSG(
-            kvBlockNumIdx < tiling_->fullKvBlockNum, "kvBlockNumIdx:%ld should be less than fullKvBlockNum:%ld",
-            kvBlockNumIdx, tiling_->fullKvBlockNum);
+
         int64_t fullKRopeAddr =
             kvBlockNumIdx * tiling_->fullKvBlockSize * tiling_->kRopeDim + kvBlockSizeOffset * tiling_->kRopeDim;
         int64_t fullKvCacheAddr =
@@ -577,17 +575,23 @@ private:
         DataCopyExtParams dataCopyParams{
             static_cast<uint16_t>(1), static_cast<uint32_t>(gatherBlockSize * tiling_->kvCacheDim * sizeof(T)), 0, 0,
             0};
-        DataCopyPad(inTensor, fullKvCacheGm_[fullKvCacheAddr], dataCopyParams, dataCopyPadParams);
 
+        DataCopyPad(inTensor, fullKvCacheGm_[fullKvCacheAddr], dataCopyParams, dataCopyPadParams);
+        
         DataCopyExtParams dataCopyParams1{
             static_cast<uint16_t>(1), static_cast<uint32_t>(gatherBlockSize * tiling_->kRopeDim * sizeof(T)), 0, 0, 0};
-        DataCopyPad(inTensor[kRopeUbOffset_], fullKRopeGm_[fullKRopeAddr], dataCopyParams1, dataCopyPadParams);
+        if (tiling_->ifQuant != 1) {
+            DataCopyPad(inTensor[kRopeUbOffset_], fullKRopeGm_[fullKRopeAddr], dataCopyParams1, dataCopyPadParams);
+        }
 
         kvCacheQue_.EnQue(inTensor);
         inTensor = kvCacheQue_.DeQue<T>();
-
+        
         DataCopyPad(selKvCacheGm_[selKvCacheAddr], inTensor, dataCopyParams);
-        DataCopyPad(selKRopeGm_[selKRopeAddr], inTensor[kRopeUbOffset_], dataCopyParams1);
+        if (tiling_->ifQuant != 1) {
+            DataCopyPad(selKRopeGm_[selKRopeAddr], inTensor[kRopeUbOffset_], dataCopyParams1);
+        }
+        
         kvCacheQue_.FreeTensor(inTensor);
     }
 
@@ -614,17 +618,23 @@ private:
         DataCopyExtParams dataCopyParams{
             static_cast<uint16_t>(1), static_cast<uint32_t>(gatherBlockSize * tiling_->kvCacheDim * sizeof(T)), 0, 0,
             0};
-        DataCopyPad(inTensor, selKvCacheGm_[srcKvCacheAddr], dataCopyParams, dataCopyPadParams);
 
+        DataCopyPad(inTensor, selKvCacheGm_[srcKvCacheAddr], dataCopyParams, dataCopyPadParams);
+        
         DataCopyExtParams dataCopyParams1{
             static_cast<uint16_t>(1), static_cast<uint32_t>(gatherBlockSize * tiling_->kRopeDim * sizeof(T)), 0, 0, 0};
-        DataCopyPad(inTensor[kRopeUbOffset_], selKRopeGm_[srcKRopeAddr], dataCopyParams1, dataCopyPadParams);
 
+        if (tiling_->ifQuant != 1) {
+            DataCopyPad(inTensor[kRopeUbOffset_], selKRopeGm_[srcKRopeAddr], dataCopyParams1, dataCopyPadParams);
+        }
+        
         kvCacheQue_.EnQue(inTensor);
         inTensor = kvCacheQue_.DeQue<T>();
-
         DataCopyPad(selKvCacheGm_[selKvCacheAddr], inTensor, dataCopyParams);
-        DataCopyPad(selKRopeGm_[selKRopeAddr], inTensor[kRopeUbOffset_], dataCopyParams1);
+
+        if (tiling_->ifQuant != 1) {
+            DataCopyPad(selKRopeGm_[selKRopeAddr], inTensor[kRopeUbOffset_], dataCopyParams1);
+        }
         kvCacheQue_.FreeTensor(inTensor);
     }
 
@@ -666,16 +676,22 @@ private:
             0, 0, 0};
         
         DataCopyPad(maxTensor, selKvCacheGm_[maxKvCacheAddr], maxKvCacheParam, dataCopyPadParams);
-        DataCopyPad(maxTensor[kRopeUbOffset_], selKRopeGm_[maxKRopeAddr], maxKropeParam, dataCopyPadParams);
         DataCopyPad(lastTensor, selKvCacheGm_[lastKvCacheAddr], lastKvCacheParam, dataCopyPadParams);
-        DataCopyPad(lastTensor[kRopeUbOffset_], selKRopeGm_[lastKRopeAddr], lastKropeParam, dataCopyPadParams);
+
+        if (tiling_->ifQuant != 1) {
+            DataCopyPad(maxTensor[kRopeUbOffset_], selKRopeGm_[maxKRopeAddr], maxKropeParam, dataCopyPadParams);
+            DataCopyPad(lastTensor[kRopeUbOffset_], selKRopeGm_[lastKRopeAddr], lastKropeParam, dataCopyPadParams);
+        }
 
         SetWaitFlag<HardEvent::MTE2_MTE3>(HardEvent::MTE2_MTE3);
 
         DataCopyPad(selKvCacheGm_[maxKvCacheAddr], lastTensor, lastKvCacheParam);
-        DataCopyPad(selKRopeGm_[maxKRopeAddr], lastTensor[kRopeUbOffset_], lastKropeParam);
         DataCopyPad(selKvCacheGm_[lastKvCacheAddr], maxTensor, maxKvCacheParam);
-        DataCopyPad(selKRopeGm_[lastKRopeAddr], maxTensor[kRopeUbOffset_], maxKropeParam);
+
+        if (tiling_->ifQuant != 1) {
+            DataCopyPad(selKRopeGm_[maxKRopeAddr], lastTensor[kRopeUbOffset_], lastKropeParam);
+            DataCopyPad(selKRopeGm_[lastKRopeAddr], maxTensor[kRopeUbOffset_], maxKropeParam);
+        }
 
         kvCacheQue_.FreeTensor(lastTensor);
         kvCacheQue_.FreeTensor(maxTensor);

@@ -52,6 +52,7 @@ TILING_DATA_FIELD_DEF(int64_t, kRopeUbSize);
 TILING_DATA_FIELD_DEF(int64_t, kvCacheUbSize);
 TILING_DATA_FIELD_DEF(int64_t, buffNum);
 TILING_DATA_FIELD_DEF(int64_t, layOut);
+TILING_DATA_FIELD_DEF(int64_t, ifQuant);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(GatherSelectionKvCache, GatherSelectionKvCacheTilingData)
