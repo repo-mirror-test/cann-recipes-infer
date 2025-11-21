@@ -79,26 +79,20 @@ ge::graphStatus MlaPrologV3Tiling::GetNpuInfo()
 QUANT_MODE MlaPrologV3Tiling::GetQuantizationMode() const
 {
     if (*(context_->weightQuantMode) == static_cast<int>(WEIGHT_QUANT_MODE::PARTIAL_QUANT)) {
-        if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::NO_QUANT) &&
-            *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::NO_QUANT)) {
             return QUANT_MODE::PARTIAL_QUANT_KV_NO_QUANT;
-        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_CHANNEL) &&
-                   *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_CHANNEL)) {
             return QUANT_MODE::PARTIAL_QUANT_KV_QUANT_PER_CHANNEL;
-        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE) &&
-                   *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE)) {
             return QUANT_MODE::PARTIAL_QUANT_KV_QUANT_PER_TILE;
         }
     }
     if (*(context_->weightQuantMode) == static_cast<int>(WEIGHT_QUANT_MODE::FULL_QUANT)) {
-        if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::NO_QUANT) &&
-            *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::NO_QUANT)) {
             return QUANT_MODE::FULL_QUANT_KV_NO_QUANT;
-        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TENSOR) &&
-                   *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::PER_TOKEN_HEAD)) {
+        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TENSOR)) {
             return QUANT_MODE::FULL_QUANT_KV_QUANT_PER_TENSOR;
-        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE) &&
-                   *(context_->queryQuantMode) == static_cast<int>(QUERY_QUANT_MODE::NO_QUANT)) {
+        } else if (*(context_->kvQuantMode) == static_cast<int>(KV_QUANT_MODE::PER_TILE)) {
             return QUANT_MODE::FULL_QUANT_KV_QUANT_PER_TILE;
         }
     }
@@ -165,21 +159,11 @@ ge::graphStatus MlaPrologV3Tiling::SetScenarioInfo()
         scenarioInfo_.cacheMode_ = CACHE_MODE::TND;
     } else if (std::strncmp(context_->cacheMode, CACHE_MODE_PA_BSND, CACHE_MODE_PA_BSND_LEN) == 0) {
         scenarioInfo_.cacheMode_ = CACHE_MODE::PA_BSND;
-    } else if (std::strncmp(context_->cacheMode, CACHE_MODE_PA_NZ, CACHE_MODE_PA_NZ_LEN) == 0) {
-        scenarioInfo_.cacheMode_ = CACHE_MODE::PA_NZ;
-    } else if (std::strncmp(context_->cacheMode, CACHE_MODE_PA_BLK_BSND, CACHE_MODE_PA_BLK_BSND_LEN) == 0) {
-        scenarioInfo_.cacheMode_ = CACHE_MODE::PA_BLK_BSND;
     } else {
-        scenarioInfo_.cacheMode_ = CACHE_MODE::PA_BLK_NZ;
+        scenarioInfo_.cacheMode_ = CACHE_MODE::PA_NZ;
     }
 
-    if ((scenarioInfo_.cacheMode_ == CACHE_MODE::PA_BLK_BSND ||
-        scenarioInfo_.cacheMode_ == CACHE_MODE::PA_BLK_NZ) &&
-        (scenarioInfo_.batchSeqFusedFlag_)) {
-        scenarioInfo_.actualSeqMode_ = ACTUAL_SEQ_MODE::EN_Q_LEN;
-    } else {
-        scenarioInfo_.actualSeqMode_ = ACTUAL_SEQ_MODE::DISABLED;
-    }
+    scenarioInfo_.actualSeqMode_ = ACTUAL_SEQ_MODE::DISABLED;
     
     if ((scenarioInfo_.batchSeqFusedFlag_ && baseShapeInfo_.tSize == 0U) ||
         (!scenarioInfo_.batchSeqFusedFlag_ && (baseShapeInfo_.bSize * baseShapeInfo_.s1Size == 0U))) {
