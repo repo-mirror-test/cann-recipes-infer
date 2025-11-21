@@ -18,6 +18,7 @@ Model Config
   perfect_eplb: False             # Whether enable, test uniform scenario of MoE experts. Support [False, True]
   enable_auto_split_weight: True  # Whether enable auto-split weight. Support [False, True]
   next_n: 1                       # Steps using multi-token prediction. Support [0, 1, 2, 3]
+  enable_offload: False           # Whether enable offload. Support [False, True]
 
 Data Config
   dataset: "default"  # Support ["default" "InfiniteBench" "LongBench"]
@@ -26,7 +27,7 @@ Data Config
   batch_size: 128     # Global batch size
 
 Parallel Config
-  cp_size: 128         # Context Parallel Number. if cp_size > 0, cp_size should equal to world_size. Only active at prefill stage
+  cp_size: 128        # Context Parallel Number. When using CP, cp_size should be the same as world_size; otherwise, set cp_size to 1. Only active at prefill stage
   attn_tp_size: 1     # Attention TP Number
   oproj_tp_size: 8    # Oproj TP Number. Only support when attn_tp_size == 1
   dense_tp_size: 1    # Dense MLP TP Number

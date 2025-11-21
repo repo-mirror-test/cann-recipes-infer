@@ -14,6 +14,7 @@ model_config:
   enable_cache_compile: False # [False, True]
   prefill_mini_batch_size: 1
   enable_online_split_weight: True # [False, True]
+  enable_offload: False
 
 data_config:
   dataset: InfiniteBench

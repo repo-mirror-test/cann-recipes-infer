@@ -22,6 +22,7 @@ from torch.nn.utils.rnn import pad_sequence
 import torch.distributed as dist
 
 from executor.utils import get_init_attn_mask, process_infer_time, build_dataset_input, remove_padding_left
+from .offload_cache import OffloadCache
 
 
 class Infer(nn.Module):
@@ -44,6 +45,8 @@ class Infer(nn.Module):
         self.tmp_kv = None
         self.tmp_indexer_kv = None
         self.tmp_indexer_ks = None
+
+        self.enable_offload = runner_settings.get("model_config").get("enable_offload", False)
 
     def inference(self, model_runner, model_inputs, cycle_idx=None, is_prefill=False, warm_up=False, prefix=''):
         if not warm_up:
@@ -95,6 +98,9 @@ class Infer(nn.Module):
         is_prefill = input_dict.get("is_prefill")
         kv_len = input_dict.get("kv_len")
         prev_hidden_states = input_dict.get("prev_hidden_states")
+        offload_cache = None
+        if self.enable_offload:
+            offload_cache = input_dict.get('offload_cache')
 
         model_inputs = model.prepare_inputs_for_generation(
             input_ids=input_ids,
@@ -105,7 +111,9 @@ class Infer(nn.Module):
             prev_hidden_states=prev_hidden_states,
             is_prefill=is_prefill,
             kv_len=kv_len,
-            input_lens=input_dict.get("input_lens"))
+            input_lens=input_dict.get("input_lens"),
+            offload_cache=offload_cache
+            )
         if model.perfect_eplb:
             b, s = model_inputs["input_ids"].shape
             if is_prefill and self.cp_size > 1:
@@ -148,6 +156,7 @@ class Infer(nn.Module):
         mtp_argdict['main_next_tokens'] = torch.argmax(outputs, dim=-1)
         mtp_argdict['accepted_num'] = self.verify_spec_tokens(
             input_dict_main, input_dict_mtp, mtp_argdict['main_next_tokens'])
+        
         if input_dict_main['is_prefill']:
             self.update_model_inputs_prefill(model_inputs, input_dict_main, input_dict_mtp,
                                              mtp_argdict['main_next_tokens'], prev_hidden_states)
@@ -256,6 +265,10 @@ class Infer(nn.Module):
         infer_time_spec_mtp = []
         past_key_values_bak = input_dict_mtp.get("past_key_values")
         past_key_values_indexer_bak = input_dict_mtp.get("past_key_values_indexer")
+        if self.enable_offload:
+            selected_key_values_bak = input_dict_mtp.get("offload_cache").selected_key_values
+            selection_kv_block_table_bak = input_dict_mtp.get("offload_cache").selection_kv_block_table
+            selection_kv_block_status_bak = input_dict_mtp.get("offload_cache").selection_kv_block_status
         for next_index in range(self.next_n):
             model_inputs = self.model_input_prepare(self.mtp_model.model, input_dict_mtp)
             outputs, prev_hidden_states, infer_time_spec = self.inference(self.mtp_model, model_inputs,
@@ -268,16 +281,27 @@ class Infer(nn.Module):
                 # mtp model output process
                 past_key_values_cur = (past_key_values_bak[next_index],)
                 past_key_values_indexer_cur = (past_key_values_indexer_bak[next_index],)
+
                 input_dict_mtp = self.mtp_model_output_process_continue(model_inputs, input_dict_mtp,
                                                                     outputs, prev_hidden_states,
                                                                     past_key_values_cur, past_key_values_indexer_cur)
+                if self.enable_offload:
+                    input_dict_mtp["offload_cache"].selected_key_values = (selected_key_values_bak[next_index],)
+                    input_dict_mtp["offload_cache"].selection_kv_block_table = \
+                            (selection_kv_block_table_bak[next_index],)
+                    input_dict_mtp["offload_cache"].selection_kv_block_status = \
+                            (selection_kv_block_status_bak[next_index],)
             else:
                 # mtp model output process
                 input_dict_mtp = self.mtp_model_output_process(model_inputs, input_dict_mtp,
                                                                 outputs, prev_hidden_states)
                 
         input_dict_mtp["past_key_values"] = past_key_values_bak
-        input_dict_mtp['past_key_values_indexer'] = past_key_values_indexer_bak
+        input_dict_mtp["past_key_values_indexer"] = past_key_values_indexer_bak
+        if self.enable_offload:
+            input_dict_mtp["offload_cache"].selected_key_values = selected_key_values_bak
+            input_dict_mtp["offload_cache"].selection_kv_block_table = selection_kv_block_table_bak
+            input_dict_mtp["offload_cache"].selection_kv_block_status = selection_kv_block_status_bak
         return input_dict_mtp, infer_time_spec_mtp
     
     def mtp_model_output_process(self, model_inputs, input_dict, outputs, prev_hidden_states):
@@ -372,11 +396,18 @@ class Infer(nn.Module):
     
     def init_cache(self, model, device, input_dict):
         if input_dict['past_key_values'] is None:
-            input_dict['past_key_values'] = model.init_cache(
-                device,
-                num_hidden_layers=self.next_n if model.is_mtp else model.config.num_hidden_layers
-            )
-        
+            if not self.enable_offload:
+                past_key_values = model.init_cache(
+                    device,
+                    num_hidden_layers=self.next_n if model.is_mtp else model.config.num_hidden_layers
+                )
+                input_dict.update({'past_key_values': past_key_values})
+            else:
+                offload_cache = OffloadCache(self.runner_settings, model)
+                past_key_values = offload_cache.init_cache(device)
+                input_dict.update({'past_key_values': past_key_values})
+                input_dict.update({'offload_cache': offload_cache})
+            
         if input_dict['past_key_values_indexer'] is None \
             and input_dict['past_key_scales_indexer'] is None:
             input_dict['past_key_values_indexer'], input_dict['past_key_scales_indexer'] = \
@@ -387,7 +418,9 @@ class Infer(nn.Module):
 
     def get_inputs(self, prompts, past_key_values, past_key_values_indexer,
                    past_key_values_mtp, past_key_values_indexer_mtp, 
-                   past_key_scales_indexer, past_key_scales_indexer_mtp, warm_up):
+                   past_key_scales_indexer, past_key_scales_indexer_mtp, 
+                   offload_cache, offload_cache_mtp,
+                   warm_up):
         tokenizer = self.main_model.tokenizer
         kwargs = {
             "return_tensors": "pt", "truncation": True, "padding": "max_length",
@@ -414,6 +447,8 @@ class Infer(nn.Module):
             "prev_hidden_states": None,
             "is_prefill": True,
         }
+        if self.enable_offload:
+            input_dict_main.update({"offload_cache": offload_cache})
         self.init_cache(self.main_model.model, self.main_model.device, input_dict_main)
 
         input_dict_mtp = None
@@ -429,8 +464,10 @@ class Infer(nn.Module):
                 "prev_hidden_states": None,
                 "is_prefill": True,
                 "spec_tokens": None,
-                "kv_len_cached": None
+                "kv_len_cached": None,
             }
+            if self.enable_offload:
+                input_dict_mtp.update({"offload_cache": offload_cache_mtp})
             self.init_cache(self.mtp_model.model, self.mtp_model.device, input_dict_mtp)
 
         return input_dict_main, input_dict_mtp, inputs, input_lens
@@ -490,6 +527,8 @@ class Infer(nn.Module):
                             past_key_scale[0].narrow(0, j * batch_len, batch_len),
                         ),
                     )
+            if self.enable_offload:
+                input_dict_single_cycle['offload_cache'] = input_dict['offload_cache']
         else:
             k, v = self.tmp_kv[0]
             input_dict_single_cycle['past_key_values'] = \
@@ -505,6 +544,8 @@ class Infer(nn.Module):
                 input_dict_single_cycle['past_key_scales_indexer'] = \
                     tuple([(self.tmp_indexer_ks[0][0].narrow(0, j * batch_len, batch_len), )] 
                         * self.main_model.model.config.num_hidden_layers)
+            if self.enable_offload:
+                input_dict_single_cycle['offload_cache'] = input_dict['offload_cache']
 
         if is_mtp:
             input_dict_single_cycle['spec_tokens'] = input_dict['spec_tokens']
@@ -592,9 +633,16 @@ class Infer(nn.Module):
     def merge_multi_cycle_res(self, input_dict_main_cycles_res, input_dict_mtp_cycles_res,
                               mtp_argdict_cycles_res, input_dict_main_ori, input_dict_mtp_ori):
         if len(input_dict_main_cycles_res) == 1:
+            if self.enable_offload:
+                input_dict_main_cycles_res[0]['offload_cache'] = input_dict_main_ori['offload_cache']
+                if self.mtp_model is not None:
+                    input_dict_mtp_cycles_res[0]['offload_cache'] = input_dict_mtp_ori['offload_cache']
             return input_dict_main_cycles_res[0], input_dict_mtp_cycles_res[0], mtp_argdict_cycles_res[0]
+        
         input_dict_main = self.cat_mini_batch_res(input_dict_main_cycles_res)
         input_dict_main['past_key_values'] = input_dict_main_ori['past_key_values']
+        if self.enable_offload:
+            input_dict_main['offload_cache'] = input_dict_main_ori['offload_cache']
         input_dict_main['past_key_values_indexer'] = input_dict_main_ori['past_key_values_indexer']
         input_dict_main['past_key_scales_indexer'] = input_dict_main_ori['past_key_scales_indexer']
 
@@ -602,6 +650,8 @@ class Infer(nn.Module):
         if self.mtp_model is not None:
             input_dict_mtp = self.cat_mini_batch_res(input_dict_mtp_cycles_res)
             input_dict_mtp['past_key_values'] = input_dict_mtp_ori['past_key_values']
+            if self.enable_offload:
+                input_dict_mtp['offload_cache'] = input_dict_mtp_ori['offload_cache']
             input_dict_mtp['past_key_values_indexer'] = input_dict_mtp_ori['past_key_values_indexer']
             input_dict_mtp['past_key_scales_indexer'] = input_dict_mtp_ori['past_key_scales_indexer']
 
@@ -625,7 +675,8 @@ class Infer(nn.Module):
 
     def model_generate(self, prompts, past_key_values=None, past_key_values_indexer=None,
                        past_key_values_mtp=None, past_key_values_indexer_mtp=None, 
-                       past_key_scales_indexer=None, past_key_scales_indexer_mtp=None, warm_up=False):
+                       past_key_scales_indexer=None, past_key_scales_indexer_mtp=None, 
+                       offload_cache=None, offload_cache_mtp=None, warm_up=False):
         # init input_dict and count
         input_dict_main, input_dict_mtp, inputs, input_lens = self.get_inputs(prompts,
                                                                               past_key_values,
@@ -634,6 +685,8 @@ class Infer(nn.Module):
                                                                               past_key_values_indexer_mtp,
                                                                               past_key_scales_indexer,
                                                                               past_key_scales_indexer_mtp,
+                                                                              offload_cache,
+                                                                              offload_cache_mtp,
                                                                               warm_up)
 
         if self.main_model.cp_size > 1:
@@ -665,6 +718,7 @@ class Infer(nn.Module):
                 # clone because model inference will do postprocess to input_dict after prefill
                 input_dict_main_clone = input_dict_main.copy()
                 input_dict_mtp_clone = input_dict_mtp.copy() if input_dict_mtp is not None else None
+
                 input_dict_main_cycles_res = []
                 input_dict_mtp_cycles_res = []
                 mtp_argdict_cycles_res = []
@@ -700,6 +754,12 @@ class Infer(nn.Module):
                                                                                   input_dict_mtp)
         # prefill output process
         generate_tokens += 1
+
+        # reinit selection block status for gather_selection before decoding
+        if self.enable_offload:
+            input_dict_main['offload_cache'].reinit_status()
+            if self.next_n > 0:
+                input_dict_mtp['offload_cache'].reinit_status()
 
         decode_cnt = 0
         decode_infer_time_rec = []

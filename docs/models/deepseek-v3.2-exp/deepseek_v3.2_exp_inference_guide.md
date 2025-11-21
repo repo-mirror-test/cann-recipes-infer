@@ -23,7 +23,8 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，可利用稀疏架构 
 - [融合Kernel](##融合Kernel)
 - [量化策略](#量化策略)
 - [多流并行优化](##多流并行优化)
-- [性能Benchmark](##性能Benchmark)
+- [KVCache Offload](##KVCache-Offload)
+- [Benchmark](##Benchmark)
 - [Future Plan](##Future-Plan)
 
 ## DeepSeek-V3.2-Exp vs V3.1
@@ -306,16 +307,32 @@ hidden_states = hidden_states_share + hidden_states_router
 </p>
 
 
-## 性能Benchmark
+## KVCache Offload
+使能W8A8C8量化后，由于受限于设备内存，在长序列场景 batch size依然无法进一步提升。为了解决设备内存紧张问题，可将占比较高的MLA Full KVCache内存卸载到Host内存上，完成KVCache的Offload，释放设备内存压力，达到提高batch size的目的。 KVCache Offload方案涉及Prefill阶段和Decode阶段。
+### Prefill Stage
+Prefill阶段，在设备上只**申请一层MLA KVCache**，同时每卡在Host内存上申请61层KVCache内存。MLA计算完后，通过多流的方式将当前层设备上的KVCache卸载到Host侧的内存上。
+<p align="center">
+  <img src="./figures/OffloadPrefill.png" width="80%" alt="Offload_Prefill">
+</p>
 
-基于Atlas A3，本实践对 DeepSeek V3.2 Exp 与 DeepSeek V3.1 W8A8C8版本进行了性能Benchmark测试。从吞吐对比曲线可见，随着序列长度增加，DeepSeek V3.2 Exp 的性能优势逐步扩大，当序列长度达到 128K 时，其吞吐达到 DeepSeek V3.1 的 450%。
+### Decode Stage
+Decode阶段，每一层计算得到的当前Token的Cache更新到Host内存上，新增的[GatherSelectionKvCache](../../../ops/ascendc/docs/custom-npu_gather_selection_kv_cache.md)算子，根据Lightning Indexer模块返回的TopK个相关Token的位置信息，从Host侧的Full KVCache选出对应的需要参与计算的kv token，送给后续的SFA计算。
+<p align="center">
+  <img src="./figures/OffloadDecode.png" width="80%" alt="Offload_Decode">
+</p>
+
+其中 GatherSelectionKvCache 算子充分利用了前后Token在同一层上TopK 命中率（相似度）特性，将已经在设备上的Cache做了复用。也即如果当前步的TopK=2048个kv token和前一步的TopK=2048个kv token有60%一样，那只需要从Host侧读取40%的没有复用的kv token，60%可以复用的kv token直接从设备上读取，从而减少了H2D的耗时。
+
+
+## Benchmark
+
+基于 Atlas A3，本实践对 DeepSeek-V3.2-Exp 与 DeepSeek-V3.1 W8A8C8 版本进行了性能Benchmark 测试。从吞吐对比曲线可见，随着序列长度增加，DeepSeek-V3.2-Exp 的性能优势逐步扩大，当序列长度达到 128K 时，其吞吐达到 DeepSeek-V3.1 的 450%。
 
 <p align="center">
   <img src="./figures/benchmark.jpg" width="50%" alt="benchmark">
 </p>
 
-长序列场景下，模型吞吐性能仍存在进一步优化空间。当前受限于 KVCache 内存容量，batch size 难以进一步提升，后续可通过 KVCache Offload 技术方案进一步提升吞吐。
-
+下表展示了未启用 Offload 时，不同 batch size 和序列长度下的推理时延和吞吐值。
 
 | Global Batch Size | Seq Length | Chips | TPOT (ms) | Throughput (tokens/p/s) |
 | ----------------- | ---------- | ----- | --------- | ----------------------- |
@@ -324,11 +341,20 @@ hidden_states = hidden_states_share + hidden_states_router
 | 128               | 131072     | 64    | 18.85     | 106                     |
 | 512               | 131072     | 64    | 25.8      | 310                     |
 
-注：性能数据基于 MTP3 与 perfect eplb配置采集，平均 3 个 draft token 中 accept token 为 1.44 个。
+> 注：性能数据基于 MTP3 与 perfect eplb 配置采集，平均 3 个 draft token 中 accept token 为 1.44 个。
+
+基于 Atlas A3 环境，在 DeepSeek-V3.2-Exp 模型使能 W8A8C8 量化的基础上，对 KVCache Offload 特性进行了 Benchmark 测试。同等序列长度下，通过使能 KVCache Offload 技术方案，相比非 Offload，模型推理支持的最大 batch size 可以翻倍。下图展示了 Offload 的内存收益，固定序列长度为 64K，相比非 Offlod，在使用 Offload 时 global batch size 可从 1024 增长到 2048；固定 global batch size 为 128，使用 Offload 时序列长度可从 256K 增长到 384K。
+
+<p align="center">
+  <img src="./figures/offload_mem_bs.png" width="48%" alt="offload_mem_bs">
+  <img src="./figures/offload_mem_seq.png" width="48%" alt="offload_mem_seq">
+</p>
+
+> 注：内存数据基于 MTP3 与 perfect eplb 配置采集。
 
 ## Future Plan
 
 - 量化：目前支持BF16/Int8版本推理。未来进一步开发低比特量化版本，探索KVCache量化压缩算法，软硬协同优化NPU计算效率，降低系统时延
-- KVCache Offload：长序列场景会面临KVCache的内存瓶颈，可参考Shadow KV和Infinite LLM，达到类似的KVCache Offload效果
+- KVCache Offload：利用前后Token命中率关系或跨layer预取等手段，进一步降低GatherSelectionKvCache耗时
 - MegaKernel：Decode阶段仍然存在较多流水并行空间，可通过PyPTO实现更大范围的MegaKernel，完成多核MPMD并行调度，提升计算效率
 

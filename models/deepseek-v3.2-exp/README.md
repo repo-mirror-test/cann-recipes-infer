@@ -11,7 +11,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
 
 操作系统：Linux ARM
 
-镜像版本：cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image:v0.4
+镜像版本：cann8.3.rc1.pt2.6.0_dsv3.2_aarch_image:v0.5
 
 驱动版本：Ascend HDK 25.2.0
 > npu-smi info 检查Ascend NPU固件和驱动是否正确安装。如果已安装，通过命令`npu-smi info`确认版本是否为 25.2.0。如果未安装或者版本不是 25.2.0，请先下载[固件和驱动包](https://support.huawei.com/enterprise/zh/ascend-computing/ascend-hdk-pid-252764743/software/264360782?idAbsPath=fixnode01|23710424|251366513|254884019|261408772|252764743)，然后根据[指导](https://hiascend.com/document/redirect/CannCommunityInstSoftware)自行安装。
@@ -39,7 +39,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
   下载[DeepSeek-V3.2-Exp原始fp8权重](https://huggingface.co/deepseek-ai/DeepSeek-V3.2-Exp)，并上传到Atlas A3各节点某个固定的路径下，比如`/data/models/DeepSeek-V3.2-Exp-fp8`。
 
 ### 获取 docker 镜像
-  从[ARM镜像地址](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.4.tar)中下载 docker 镜像，然后上传到A3服务器的每个节点上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.4.tar`。
+  从[ARM镜像地址](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/cann8.3.rc1.pt2.6.0_dsv3.2_aarch_image_v0.5.tar)中下载 docker 镜像，然后上传到A3服务器的每个节点上，并通过命令导入镜像 `docker load -i cann8.3.rc1.pt2.6.0_dsv3.2_aarch_image_v0.5.tar`。
 
 ### 拉起 docker 容器
 
@@ -68,7 +68,7 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
       --net=host \
       --shm-size=128g \
       --privileged \
-      cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image:v0.4 /bin/bash
+      cann8.3.rc1.pt2.6.0_dsv3.2_aarch_image:v0.5 /bin/bash
   ```
   在各个节点上通过如下命令进入容器：
   ```
