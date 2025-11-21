@@ -229,10 +229,10 @@ __aicore__ inline uint32_t LIPreload<LIT>::GetS2BaseBlockNumOnMask(uint32_t s1gI
                                                                    uint32_t actS2Size)
 {
     uint32_t s1Offset = constInfo.s1BaseSize * s1gIdx;
-    uint32_t validS2LenBase = actS2Size - actS1Size;
-    uint32_t validS2Len = s1Offset + validS2LenBase + constInfo.s1BaseSize;
-    validS2Len = Min(validS2Len, actS2Size);
-    validS2Len = Max(validS2Len, 0);
+    int32_t validS2LenBase = static_cast<int32_t>(actS2Size) - static_cast<int32_t>(actS1Size);
+    int32_t validS2Len = s1Offset + validS2LenBase + constInfo.s1BaseSize;
+    validS2Len = Min(validS2Len, static_cast<int32_t>(actS2Size));
+    validS2Len = Max(validS2Len, 1);
     return (validS2Len + constInfo.s2BaseSize - 1) / constInfo.s2BaseSize;
 }
 
