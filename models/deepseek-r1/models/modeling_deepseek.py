@@ -1652,6 +1652,7 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         # gen micro_batch input_idx
         input_ids = input_ids.reshape(1, -1)
         input_ids_mb = input_ids.split(split_sections, dim=1)
+        input_ids_mb = [x.reshape(-1, seq_len) for x in input_ids_mb]
         # gen micro_batch actual_seq_lengths_kv
         actual_seq_lengths_kv_mb0 = torch.cumsum(kv_len_with_pad_mb[0], dim=0).tolist()
         actual_seq_lengths_kv_mb1 = torch.cumsum(kv_len_with_pad_mb[1], dim=0).tolist()
@@ -2012,8 +2013,8 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         hidden_states_mb0, _ = self.norm(hidden_states_mb0, residual_mb0)
         hidden_states_mb1, _ = self.norm(hidden_states_mb1, residual_mb1)
 
-        # [B,S,H] concat S
-        return torch.cat([hidden_states_mb0, hidden_states_mb1], dim=1)
+        # [B,S,H] concat B
+        return torch.cat([hidden_states_mb0, hidden_states_mb1], dim=0)
 
 
 class DeepseekV3ModelMTPLayer(DeepseekV3Model):
