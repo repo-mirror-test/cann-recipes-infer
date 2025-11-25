@@ -927,7 +927,7 @@ class DeepseekIndexerAttention(nn.Module):
         **kwargs,
     ):
         # hidden_states Prefill:[1, B*S, H] Decode:[B, S, H]
-        query_states, key_states, topk_indices = self.prepare_qkv(
+        query_states, topk_indices = self.prepare_qkv(
             hidden_states=hidden_states,
             cos_sin=cos_sin,
             kv_len=kv_len,
@@ -941,13 +941,13 @@ class DeepseekIndexerAttention(nn.Module):
             slot_mapping=slot_mapping,
             offload_cache=offload_cache
         )
-        # query_states is tuple(q_nope,q_pe) q_nope shape: [B,S,N,D], key_states: [B,S,1,D]
+        # query_states is tuple(q_nope,q_pe) q_nope shape: [B,S,N,D]
         bsz, q_len, _, _ = query_states[0].shape
         actual_seq_qlen = torch.tensor([q_len + i * q_len for i in range(bsz)], dtype=torch.int32).npu()
         if is_prefill:
             actual_seq_lengths_kv = torch.tensor([q_len for _ in range(bsz)], dtype=torch.int32).npu()
         attn_output = self.attn_func(
-            query_states=query_states, key_states=key_states,
+            query_states=query_states,
             actual_seq_qlen=actual_seq_qlen,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
             past_key_value=past_key_value,
@@ -976,7 +976,7 @@ class DeepseekIndexerAttention(nn.Module):
         **kwargs,
     ):
         # Prefill:[1, B*S, H] Decode:[B, S, H]
-        query_states, key_states, topk_indices = self.prepare_qkv(
+        query_states, topk_indices = self.prepare_qkv(
             hidden_states=hidden_states,
             cos_sin=cos_sin,
             kv_len=kv_len,
@@ -1000,7 +1000,7 @@ class DeepseekIndexerAttention(nn.Module):
         query_states_next = q_nope_next, q_rope_next
         # query_states: [B,S,N,D], K: [B,S,1,D]
         attn_output_prev = self.attn_func(
-            query_states=query_states_prev, key_states=key_states,
+            query_states=query_states_prev,
             actual_seq_qlen=cp_input_dict["actual_seq_q"],
             actual_seq_lengths_kv=cp_input_dict["kv_len_prev"],
             past_key_value=past_key_value,
@@ -1009,7 +1009,7 @@ class DeepseekIndexerAttention(nn.Module):
             offload_cache=offload_cache
         )
         attn_output_next = self.attn_func(
-            query_states=query_states_next, key_states=key_states,
+            query_states=query_states_next,
             actual_seq_qlen=cp_input_dict["actual_seq_q"],
             actual_seq_lengths_kv=cp_input_dict["kv_len_next"],
             past_key_value=past_key_value,
@@ -1131,10 +1131,7 @@ class DeepseekIndexerAttention(nn.Module):
         if self.kv_cache_c8:
             c8_input_dict.update({'pertoken_scale': dequant_q_norm})
         
-        k_nope = nope_cache
-        k_pe = rope_cache
-
-        return q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache
+        return q_nope, q_pe, qr, nope_cache, rope_cache
 
     def mlaprolog_decode(
         self,
@@ -1190,11 +1187,9 @@ class DeepseekIndexerAttention(nn.Module):
         q_nope, q_pe, dequant_scale_q_nope, qr, dequant_q_norm = torch.ops.custom.npu_mla_prolog_v3(
             **mla_prolog_input_args
         )
-        k_nope = nope_cache
-        k_pe = rope_cache
         if self.kv_cache_c8:
             c8_input_dict.update({'pertoken_scale': dequant_q_norm})
-        return q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache
+        return q_nope, q_pe, qr, nope_cache, rope_cache
   
     def prepare_qkv(
         self,
@@ -1217,13 +1212,13 @@ class DeepseekIndexerAttention(nn.Module):
 
         c8_input_dict = {}
         if not is_prefill:
-            q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache = self.mlaprolog_decode(
+            q_nope, q_pe, qr, nope_cache, rope_cache = self.mlaprolog_decode(
                     hidden_states=hidden_states, cos_sin=cos_sin,
                     past_key_value=past_key_value, slot_mapping=slot_mapping,
                     c8_input_dict=c8_input_dict
                     )
         else:
-            q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache = self.mlaprolog_prefill(
+            q_nope, q_pe, qr, nope_cache, rope_cache = self.mlaprolog_prefill(
                 hidden_states=hidden_states, cos_sin=cos_sin,
                 past_key_value=past_key_value, slot_mapping=slot_mapping,
                 cp_input_dict=cp_input_dict, c8_input_dict=c8_input_dict,
@@ -1233,41 +1228,36 @@ class DeepseekIndexerAttention(nn.Module):
                 offload_cache.d2h_event.record()
                 with torch.npu.stream(offload_cache.d2h_stream):
                     offload_cache.d2h_event.wait()
+                    k_nope = nope_cache.view(bsz, -1, 1, self.last_dim)[:, :seq, ...]
                     torch_npu.npu_scatter_nd_update_(
                         past_key_value[self.layer_idx][0].view(-1, self.last_dim), 
                         slot_mapping.view(-1, 1), 
-                        k_nope.view(bsz, -1, 1, self.last_dim)[:, :seq, ...].view(-1, self.last_dim)
+                        k_nope.view(-1, self.last_dim)
                         )
                     if not self.kv_cache_c8:
+                        k_rope = rope_cache.view(bsz, -1, 1, self.qk_rope_head_dim)[:, :seq, ...]
                         torch_npu.npu_scatter_nd_update_(
                             past_key_value[self.layer_idx][1].view(-1, self.qk_rope_head_dim), 
                             slot_mapping.view(-1, 1), 
-                            k_pe.view(bsz, -1, 1, self.qk_rope_head_dim)[:, :seq, ...].view(-1, self.qk_rope_head_dim)
+                            k_rope.view(-1, self.qk_rope_head_dim)
                             )
                     offload_cache.d2h_event.record()
 
         query_states = (q_nope.view(bsz, -1, self.num_heads_per_rank, self.kv_lora_rank), \
                     q_pe.view(bsz, -1, self.num_heads_per_rank, self.qk_rope_head_dim))  # 1,B*S,N,D -> B,S,N,D
-        key_states = (k_nope.view(bsz, -1, 1, self.kv_lora_rank), \
-                    k_pe.view(bsz, -1, 1, self.qk_rope_head_dim) if k_pe is not None else None)  # 1,B*S,1,D -> B,S,1,D
-        if not is_prefill:
-            key_states = (nope_cache.view(bsz, -1, 1, self.kv_lora_rank), \
-                        rope_cache.view(bsz, -1, 1, self.qk_rope_head_dim) if rope_cache is not None else None)
-
         block_table = self.prefill_block_table if is_prefill else self.block_table
-
         topk_indices = self.indexer(hidden_states, qr, actual_seq_lengths_kv, kv_len, cos_sin, position_ids, \
-                                    query_states, key_states, \
+                                    query_states, \
                                     past_key_values_indexer, past_key_scales_indexer, \
                                     slot_mapping, block_table, \
                                     actual_seq_lengths_q, cp_input_dict, c8_input_dict,
                                     is_prefill)
 
-        return query_states, key_states, topk_indices
+        return query_states, topk_indices
 
     def apply_attention_fusion(
         self,
-        query_states, key_states, topk_indices,
+        query_states, topk_indices,
         actual_seq_qlen: torch.Tensor = None,
         actual_seq_lengths_kv: torch.Tensor = None,
         past_key_value: Optional[Cache] = None,

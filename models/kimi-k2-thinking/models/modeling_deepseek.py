@@ -896,7 +896,7 @@ class DeepseekAttention(nn.Module):
         **kwargs,
     ):
         # hidden_states Prefill:[1, B*S, H] Decode:[B, S, H]
-        query_states, key_states = self.prepare_qkv(
+        query_states = self.prepare_qkv(
             hidden_states=hidden_states,
             cos_sin=cos_sin,
             kv_len=kv_len,
@@ -914,7 +914,7 @@ class DeepseekAttention(nn.Module):
             actual_seq_qlen = torch.tensor([q_len + i * q_len for i in range(bsz)], dtype=torch.int32).npu()
             actual_seq_lengths_kv = torch.tensor([q_len for _ in range(bsz)], dtype=torch.int32).npu()
         attn_output = self.attn_func(
-            query_states=query_states, key_states=key_states,
+            query_states=query_states,
             actual_seq_qlen=actual_seq_qlen,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
             past_key_value=past_key_value,
@@ -940,7 +940,7 @@ class DeepseekAttention(nn.Module):
         **kwargs,
     ):
         # Prefill:[1, B*S, H] Decode:[B, S, H]
-        query_states, key_states = self.prepare_qkv(
+        query_states = self.prepare_qkv(
             hidden_states=hidden_states,
             cos_sin=cos_sin,
             kv_len=kv_len,
@@ -960,7 +960,7 @@ class DeepseekAttention(nn.Module):
         query_states_next = q_nope_next, q_rope_next
         # query_states: [B,S,N,D], K: [B,S,1,D]
         attn_output_prev = self.attn_func(
-            query_states=query_states_prev, key_states=key_states,
+            query_states=query_states_prev,
             actual_seq_qlen=cp_input_dict["actual_seq_q"],
             actual_seq_lengths_kv=cp_input_dict["kv_len_prev"],
             past_key_value=past_key_value,
@@ -968,7 +968,7 @@ class DeepseekAttention(nn.Module):
             attention_mask=attention_mask
         )
         attn_output_next = self.attn_func(
-            query_states=query_states_next, key_states=key_states,
+            query_states=query_states_next,
             actual_seq_qlen=cp_input_dict["actual_seq_q"],
             actual_seq_lengths_kv=cp_input_dict["kv_len_next"],
             past_key_value=past_key_value,
@@ -1054,10 +1054,7 @@ class DeepseekAttention(nn.Module):
                                             slot_mapping.view(-1, 1),
                                             k_pe.view(-1, k_pe.shape[-1]))
         
-        k_nope = nope_cache
-        k_pe = rope_cache
-
-        return q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache
+        return q_nope, q_pe, qr, nope_cache, rope_cache
 
     def mlaprolog_decode(
         self,
@@ -1096,9 +1093,8 @@ class DeepseekAttention(nn.Module):
         q_nope, q_pe, _, qr, _ = torch.ops.custom.npu_mla_prolog_v3(
             **mla_prolog_input_args
         )
-        k_nope = nope_cache
-        k_pe = rope_cache
-        return q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache
+        
+        return q_nope, q_pe, qr, nope_cache, rope_cache
   
     def prepare_qkv(
         self,
@@ -1115,11 +1111,11 @@ class DeepseekAttention(nn.Module):
         **kwargs,
     ):
         if not is_prefill:
-            q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache = self.mlaprolog_decode(
+            q_nope, q_pe, qr, nope_cache, rope_cache = self.mlaprolog_decode(
                     hidden_states=hidden_states, cos_sin=cos_sin,
                     past_key_value=past_key_value, slot_mapping=slot_mapping)
         else:
-            q_nope, q_pe, qr, k_nope, k_pe, nope_cache, rope_cache = self.mlaprolog_prefill(
+            q_nope, q_pe, qr, nope_cache, rope_cache = self.mlaprolog_prefill(
                 hidden_states=hidden_states, cos_sin=cos_sin,
                 past_key_value=past_key_value, slot_mapping=slot_mapping,
                 cp_input_dict=cp_input_dict)
@@ -1127,17 +1123,12 @@ class DeepseekAttention(nn.Module):
         bsz = actual_seq_lengths_kv.shape[0]
         query_states = (q_nope.view(bsz, -1, self.num_heads_per_rank, self.kv_lora_rank), \
                     q_pe.view(bsz, -1, self.num_heads_per_rank, self.qk_rope_head_dim))  # 1,B*S,N,D -> B,S,N,D
-        key_states = (k_nope.view(bsz, -1, 1, self.kv_lora_rank), \
-                    k_pe.view(bsz, -1, 1, self.qk_rope_head_dim) if k_pe is not None else None)  # 1,B*S,1,D -> B,S,1,D
-        if not is_prefill:
-            key_states = (nope_cache.view(bsz, -1, 1, self.kv_lora_rank), \
-                        rope_cache.view(bsz, -1, 1, self.qk_rope_head_dim) if rope_cache is not None else None)
 
-        return query_states, key_states
+        return query_states
 
     def apply_attention_fusion(
         self,
-        query_states, key_states,
+        query_states,
         actual_seq_qlen: torch.Tensor = None,
         actual_seq_lengths_kv: torch.Tensor = None,
         past_key_value: Optional[Cache] = None,

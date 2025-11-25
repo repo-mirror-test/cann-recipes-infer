@@ -113,7 +113,6 @@ class Indexer(nn.Module):
         cos_sin: torch.Tensor,
         position_ids: torch.Tensor,
         query_states: torch.Tensor,
-        key_states: torch.Tensor,
         past_key_values_indexer: Optional[List[torch.FloatTensor]],
         past_key_scales_indexer: Optional[List[torch.FloatTensor]],
         slot_mapping: torch.Tensor,
@@ -131,7 +130,6 @@ class Indexer(nn.Module):
             "cos_sin": cos_sin,
             "position_ids": position_ids,
             "query_states": query_states,
-            "key_states": key_states,
             "past_key_values_indexer": past_key_values_indexer,
             "past_key_scales_indexer": past_key_scales_indexer,
             "slot_mapping": slot_mapping,
@@ -161,7 +159,6 @@ class Indexer(nn.Module):
         cos_sin: torch.Tensor,
         position_ids: torch.Tensor,
         query_states: torch.Tensor,
-        key_states: torch.Tensor,
         past_key_values_indexer: Optional[List[torch.FloatTensor]],
         past_key_scales_indexer: Optional[List[torch.FloatTensor]],
         slot_mapping: torch.Tensor,
@@ -228,7 +225,6 @@ class Indexer(nn.Module):
         cos_sin: torch.Tensor,
         position_ids: torch.Tensor,
         query_states: torch.Tensor,
-        key_states: torch.Tensor,
         past_key_values_indexer: Optional[List[torch.FloatTensor]],
         past_key_scales_indexer: Optional[List[torch.FloatTensor]],
         slot_mapping: torch.Tensor,
@@ -252,7 +248,6 @@ class Indexer(nn.Module):
             # prolog for kv use multi streams
             if enable_multi_streams:
                 tng.scope.npu_wait_tensor(qr, query_states[0])
-                tng.scope.npu_wait_tensor(qr, key_states[0])
             # q process in new stream
             q_b = self.wq_b(qr, c8_input_dict.get("pertoken_scale", None)) # [b,s,1536] @ [1536,64*128] = [b,s,64*128]
             q = q_b.view(bsz, seqlen, self.n_heads, self.head_dim)  # [b,s,64,128]
