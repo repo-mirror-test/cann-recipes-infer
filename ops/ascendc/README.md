@@ -1,6 +1,6 @@
 ## 概述
 
-此项目是基于昇腾Atlas A3的融合算子库，当前项目中包括[SparseFlashAttention](./docs/custom-npu_sparse_flash_attention.md)、[SparseFlashAttentionAntiquant](./docs/custom-npu_sparse_flash_attention_antiquant.md)、[LightningIndexer](./docs/custom-npu_lightning_indexer.md)、[LightningIndexerQuant](./docs/custom-npu_lightning_indexer_quant.md)、[SwigluClipQuant](./docs/custom-npu_swiglu_clip_quant.md)和[MLAPrologV3](./docs/custom-npu_mla_prolog_v3.md)五个算子。
+此项目是基于昇腾Atlas A3的融合算子库，当前项目中包括[SparseFlashAttention](./docs/custom-npu_sparse_flash_attention.md)、[SparseFlashAttentionAntiquant](./docs/custom-npu_sparse_flash_attention_antiquant.md)、[LightningIndexer](./docs/custom-npu_lightning_indexer.md)、[LightningIndexerQuant](./docs/custom-npu_lightning_indexer_quant.md)、[SwigluClipQuant](./docs/custom-npu_swiglu_clip_quant.md)、[MLAPrologV3](./docs/custom-npu_mla_prolog_v3.md)和[GatherSelectionKvCache](./docs/custom-npu_gather_selection_kv_cache.md)七个算子。
 
 ## 目录结构说明
 
@@ -27,6 +27,9 @@
   |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
   |   |   ├── op_kernel                         # 算子Kernel目录
   |   ├── mla_prolog_v3                         # 推理MLAPrologV3算子示例代码
+  |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
+  |   |   ├── op_kernel                         # 算子Kernel目录
+  |   ├── gather_selection_kv_cache             # 推理gather_selection_kv_cache算子示例代码
   |   |   ├── op_host                           # 算子信息库、Tiling、InferShape相关实现目录
   |   |   ├── op_kernel                         # 算子Kernel目录
   |
@@ -57,7 +60,7 @@
 
 ### 获取 docker 镜像
 
-  从[ARM镜像地址](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.4.tar)中下载 docker 镜像，然后上传到A3服务器上，并通过命令导入镜像 `docker load -i cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image_v0.4.tar`。
+  从[ARM镜像地址](https://cann-ai.obs.cn-north-4.myhuaweicloud.com/cann-quantization/DeepSeek-V3.2-Exp/cann8.3.rc1.pt2.6.0_dsv3.2_aarch_image_v0.5.tar)中下载 docker 镜像，然后上传到A3服务器上，并通过命令导入镜像 `docker load -i cann8.3.rc1.pt2.6.0_dsv3.2_aarch_image_v0.5.tar`。
 
 ### 拉起 docker 容器
 
@@ -86,7 +89,7 @@
       --net=host \
       --shm-size=128g \
       --privileged \
-      cann8.3.rc1.alpha003_pt2.6.0_dsv3.2_aarch_image:v0.4 /bin/bash
+      cann8.3.rc1.pt2.6.0_dsv3.2_aarch_image:v0.5 /bin/bash
   ```
   通过如下命令进入容器：
   ```

@@ -23,9 +23,9 @@ custom.npu_gather_selection_kv_cache(Tensor(a!) selection_k_rope, Tensor(b!) sel
 >- BLOCK_SIZE表示每个block中的token数，S_BLOCK_NUM表示selection_kv_cache的block num，S_MAX_BLOCK_NUM表示selection_kv_cache的最大block num，F_BLOCK_NUM表示full_kv_cache的block num，F_MAX_BLOCK_NUM表示full_kv_cache的最大block num。
 >- B（Batch Size）表示输入样本批量大小、S（Sequence Nums）表示输入样本序列个数、H（Head Num）表示多头数、TOPK表示选取的token个数。
 
--   **selection_k_rope**（`Tensor`）：表示被选取的k_rope，必选参数，不支持非连续，数据格式支持ND，计算结果原地更新，数据类型支持`bfloat16`、`float16`，shape为：[S_BLOCK_NUM, BLOCK_SIZE, K_ROPE]。
+-   **selection_k_rope**（`Tensor`）：表示被选取的k_rope，必选参数，不支持非连续，数据格式支持ND，计算结果原地更新，数据类型支持`bfloat16`、`float16`、`int8`，shape为：[S_BLOCK_NUM, BLOCK_SIZE, K_ROPE]。数据类型为`int8`时，仅支持输入空tensor。
     
--   **selection_kv_cache**（`Tensor`）：表示被选取的kv_cache，必选参数，不支持非连续，数据格式支持ND，计算结果原地更新，数据类型支持`bfloat16`、`float16`，shape为：[S_BLOCK_NUM, BLOCK_SIZE, KV_CACHE]。
+-   **selection_kv_cache**（`Tensor`）：表示被选取的kv_cache，必选参数，不支持非连续，数据格式支持ND，计算结果原地更新，数据类型支持`bfloat16`、`float16`、`int8`，shape为：[S_BLOCK_NUM, BLOCK_SIZE, KV_CACHE]。
     
 -   **selection_kv_block_table**（`Tensor`）：表示被选取的kv_cache对应的block table映射表，必选参数，不支持非连续，数据格式支持ND，计算结果原地更新，数据类型支持`int32`，shape为：\[B\*S\*H, S_MAX_BLOCK_NUM\]。
 
@@ -33,9 +33,9 @@ custom.npu_gather_selection_kv_cache(Tensor(a!) selection_k_rope, Tensor(b!) sel
 
 -   **selection_topk_indices**（`Tensor`）：表示每个token选出的topk索引，必选参数，不支持非连续，数据格式支持ND，数据类型支持`int32`。当shape类型为BSND时，shape为：[B, S, H, TOPK]；当shape类型为TND时，shape为：[B*S, H, TOPK]。
 
--   **full_k_rope**（`Tensor`）：表示全量的k_rope，必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`、`float16`，shape为：[F_BLOCK_NUM, BLOCK_SIZE, K_ROPE]。
+-   **full_k_rope**（`Tensor`）：表示全量的k_rope，必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`、`float16`、`int8`，shape为：[F_BLOCK_NUM, BLOCK_SIZE, K_ROPE]。数据类型为`int8`时，仅支持输入空tensor。
 
--   **full_kv_cache**（`Tensor`）：表示全量的kv_cache，必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`、`float16`，shape为：[F_BLOCK_NUM, BLOCK_SIZE, K_CACHE]。
+-   **full_kv_cache**（`Tensor`）：表示全量的kv_cache，必选参数，不支持非连续，数据格式支持ND，数据类型支持`bfloat16`、`float16`、`int8`，shape为：[F_BLOCK_NUM, BLOCK_SIZE, K_CACHE]。
 
 -   **full_kv_block_table**（`Tensor`）：表示全量的kv_cache对应的block table映射表，必选参数，不支持非连续，数据格式支持ND，数据类型支持`int32`，shape为：[B, F_MAX_BLOCK_NUM]。
 
