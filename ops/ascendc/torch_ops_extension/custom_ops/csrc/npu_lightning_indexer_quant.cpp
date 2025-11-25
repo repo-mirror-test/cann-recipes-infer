@@ -28,6 +28,15 @@ at::Tensor construct_lightning_indexer_quant_output_tensor(const at::Tensor& que
                                                            std::string key_layout_str)
 {
     at::SmallVector<int64_t, SIZE> output_size;
+    for (size_t i = 0; i < query.sizes().size(); i++) {
+        TORCH_CHECK(query.size(i) > 0, "All values within query's shape should be greater "
+            "than 0, but shape[", i, "] is ", query.size(i));
+    }
+    for (size_t i = 0; i < key.sizes().size(); i++) {
+        TORCH_CHECK(key.size(i) > 0, "All values within key's shape should be greater "
+            "than 0, but shape[", i, "] is ", key.size(i));
+    }
+    TORCH_CHECK(sparse_count > 0, "sparse count should be greater than 0, but now is ", sparse_count);
     int64_t keyHeadNum = (key_layout_str == "TND")? key.size(DIM_1) : key.size(DIM_2);
     if (query_layout_str == "BSND") {
         output_size = {query.size(DIM_0), query.size(DIM_1), keyHeadNum, sparse_count};
