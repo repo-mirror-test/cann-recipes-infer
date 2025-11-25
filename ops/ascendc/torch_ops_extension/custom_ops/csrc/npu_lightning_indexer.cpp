@@ -53,6 +53,9 @@ at::Tensor npu_lightning_indexer_npu(
     const c10::optional<at::Tensor> &block_table, c10::string_view layout_query,
     c10::string_view layout_key, int64_t sparse_count, int64_t sparse_mode)
 {
+    TORCH_CHECK(query.numel() > 0, "Query is empty.");
+    TORCH_CHECK(key.numel() > 0, "Key is empty.");
+    TORCH_CHECK(weights.numel() > 0, "Weights is empty.");
     std::string query_layout_str = std::string(layout_query);
     std::string key_layout_str = std::string(layout_key);
 
@@ -78,6 +81,9 @@ at::Tensor npu_lightning_indexer_meta(
     const c10::optional<at::Tensor> &block_table, c10::string_view layout_query,
     c10::string_view layout_key, int64_t sparse_count, int64_t sparse_mode)
 {
+    TORCH_CHECK(query.numel() > 0, "Query is empty.");
+    TORCH_CHECK(key.numel() > 0, "Key is empty.");
+    TORCH_CHECK(weights.numel() > 0, "Weights is empty.");
     std::string query_layout_str = std::string(layout_query);
     std::string key_layout_str = std::string(layout_key);   
     // construct the output tensor

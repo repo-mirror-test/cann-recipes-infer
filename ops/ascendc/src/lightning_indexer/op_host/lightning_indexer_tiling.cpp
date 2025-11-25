@@ -454,6 +454,82 @@ ge::graphStatus LIInfoParser::GetS2Size()
     return ge::GRAPH_SUCCESS;
 }
 
+ge::graphStatus LIInfoParser::ValidateInputShapesMatchQTnd()
+{
+    // -----------------------check BatchSize-------------------
+    // bSize_ 来源于act_seq_q
+    if (kLayout_ == DataLayout::TND) {
+        OPS_ERR_IF(
+        (opParamInfo_.actualSeqLengths.tensor->GetShapeSize() != bSize_),
+            OPS_LOG_E(opName_,
+                "TND case input actual_seq_lengths_query, actual_seq_lengths_key are %u, %ld respectively, they must be same.",
+                bSize_, opParamInfo_.actualSeqLengths.tensor->GetShapeSize()),
+            return ge::GRAPH_FAILED);
+    } else { // kLayout_ PA_BSND
+        OPS_ERR_IF(
+        (opParamInfo_.actualSeqLengths.tensor->GetShapeSize() != bSize_) ||
+                (opParamInfo_.blockTable.tensor->GetStorageShape().GetDim(0) != bSize_),
+            OPS_LOG_E(
+                opName_,
+                "TND case input actual_seq_lengths_query, actual_seq_lengths_key, block_table dim 0 are %u, %ld, %ld respectively, they must be same.",
+                bSize_, opParamInfo_.actualSeqLengths.tensor->GetShapeSize(),
+                opParamInfo_.blockTable.tensor->GetStorageShape().GetDim(0)),
+            return ge::GRAPH_FAILED);
+    }
+    // -----------------------check T-------------------
+    uint32_t qTsize = opParamInfo_.query.shape->GetStorageShape().GetDim(0);
+    OPS_ERR_IF((opParamInfo_.weights.shape->GetStorageShape().GetDim(0) != qTsize) ||
+                   (opParamInfo_.attenOut.shape->GetStorageShape().GetDim(0) != qTsize),
+                OPS_LOG_E(opName_, "TND case input query, weights, sparse_indices dim 0 are %u, %ld, %ld respectively, they must be same.",
+                    qTsize, opParamInfo_.weights.shape->GetStorageShape().GetDim(0),
+                    opParamInfo_.attenOut.shape->GetStorageShape().GetDim(0)),
+                return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus LIInfoParser::ValidateInputShapesMatchQBsnd()
+{
+    // -----------------------check BatchSize-------------------
+    // bSize_ 来源于query
+    if (kLayout_ == DataLayout::BnBsND) {
+        OPS_ERR_IF((opParamInfo_.blockTable.tensor->GetStorageShape().GetDim(0) != bSize_) ||
+                    (opParamInfo_.actualSeqLengths.tensor->GetShapeSize() != bSize_),
+                OPS_LOG_E(opName_, "BSND case input query, actual_seq_lengths_key, block_table dim 0 are %u, %ld, %ld respectively, they must be same.",
+                    bSize_, opParamInfo_.actualSeqLengths.tensor->GetShapeSize(),
+                    opParamInfo_.blockTable.tensor->GetStorageShape().GetDim(0)),
+                return ge::GRAPH_FAILED);
+    } else if (kLayout_ == DataLayout::BSND) {
+        OPS_ERR_IF(opParamInfo_.key.shape->GetStorageShape().GetDim(0) != bSize_,
+                OPS_LOG_E(opName_, "BSND case input query, key dim 0 are %u, %ld respectively, they must be same.",
+                    bSize_, opParamInfo_.key.shape->GetStorageShape().GetDim(0)),
+                return ge::GRAPH_FAILED);
+        OPS_ERR_IF((opParamInfo_.actualSeqLengths.tensor != nullptr) &&
+                    (opParamInfo_.actualSeqLengths.tensor->GetShapeSize() != bSize_),
+                OPS_LOG_E(opName_, "BSND case input query, actual_seq_lengths_key dim 0 are %u, %ld respectively, they must be same.",
+                    bSize_, opParamInfo_.actualSeqLengths.tensor->GetShapeSize()),
+                return ge::GRAPH_FAILED);
+    }
+    OPS_ERR_IF((opParamInfo_.weights.shape->GetStorageShape().GetDim(0) != bSize_) ||
+                (opParamInfo_.attenOut.shape->GetStorageShape().GetDim(0) != bSize_),
+                OPS_LOG_E(opName_, "BSND case input query, weight, sparse_indices dim 0 are %u, %ld, %ld respectively, they must be same.",
+                    bSize_, opParamInfo_.weights.shape->GetStorageShape().GetDim(0),
+                    opParamInfo_.attenOut.shape->GetStorageShape().GetDim(0)),
+                return ge::GRAPH_FAILED);
+    OPS_ERR_IF((opParamInfo_.actualSeqLengthsQ.tensor != nullptr) &&
+                   (opParamInfo_.actualSeqLengthsQ.tensor->GetShapeSize() != bSize_),
+                OPS_LOG_E(opName_, "BSND case input query, actual_seq_lengths_query dim 0 are %u, %ld respectively, they must be same.",
+                    bSize_, opParamInfo_.actualSeqLengthsQ.tensor->GetShapeSize()),
+                return ge::GRAPH_FAILED);
+    // -----------------------check S1-------------------
+    OPS_ERR_IF((opParamInfo_.weights.shape->GetStorageShape().GetDim(1) != s1Size_) ||
+                   (opParamInfo_.attenOut.shape->GetStorageShape().GetDim(1) != s1Size_),
+                OPS_LOG_E(opName_, "BSND case input query, weight, sparse_indices dim 1 are %u, %ld, %ld, they must be same.",
+                    s1Size_, opParamInfo_.weights.shape->GetStorageShape().GetDim(1),
+                    opParamInfo_.attenOut.shape->GetStorageShape().GetDim(1)),
+                return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
+
 ge::graphStatus LIInfoParser::ValidateInputShapesMatch()
 {
     /*
@@ -478,49 +554,13 @@ ge::graphStatus LIInfoParser::ValidateInputShapesMatch()
     uint32_t queryWeightsN1Dim = 1;
     uint32_t outN2Dim = 1;
     if (qLayout_ == DataLayout::TND) {
-        // -----------------------check BatchSize-------------------
-        // bSize_ 来源于act_seq_q
-        OPS_ERR_IF(
-            (opParamInfo_.actualSeqLengths.tensor->GetShapeSize() != bSize_) ||
-                ((opParamInfo_.blockTable.tensor != nullptr) &&
-                (opParamInfo_.blockTable.tensor->GetStorageShape().GetDim(0) != bSize_)),
-            OPS_LOG_E(
-                opName_,
-                "TND case input actual_seq_lengths_query, actual_seq_lengths_key, block_table dim 0 are %u, %u, %u respectively, they must be same.",
-                bSize_, opParamInfo_.actualSeqLengths.tensor->GetShapeSize(),
-                opParamInfo_.blockTable.tensor->GetStorageShape().GetDim(0)),
-            return ge::GRAPH_FAILED);
-        // -----------------------check T-------------------
-        uint32_t qTsize = opParamInfo_.query.shape->GetStorageShape().GetDim(0);
-        OPS_ERR_IF((opParamInfo_.weights.shape->GetStorageShape().GetDim(0) != qTsize) ||
-                       (opParamInfo_.attenOut.shape->GetStorageShape().GetDim(0) != qTsize),
-                   OPS_LOG_E(opName_, "TND case input query, weights, sparse_indices dim 0 are %u, %u, %u respectively, they must be same.",
-                        qTsize, opParamInfo_.weights.shape->GetStorageShape().GetDim(0),
-                        opParamInfo_.attenOut.shape->GetStorageShape().GetDim(0)),
-                   return ge::GRAPH_FAILED);
+        if (ValidateInputShapesMatchQTnd() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
     } else {
-        // -----------------------check BatchSize-------------------
-        // bSize_ 来源于query
-        OPS_ERR_IF((opParamInfo_.weights.shape->GetStorageShape().GetDim(0) != bSize_) ||
-                       ((opParamInfo_.blockTable.tensor != nullptr) &&
-                       (opParamInfo_.blockTable.tensor->GetStorageShape().GetDim(0) != bSize_)) ||
-                       ((opParamInfo_.actualSeqLengths.tensor != nullptr) &&
-                        (opParamInfo_.actualSeqLengths.tensor->GetShapeSize() != bSize_)) ||
-                       (opParamInfo_.attenOut.shape->GetStorageShape().GetDim(0) != bSize_),
-                   OPS_LOG_E(opName_, "BSND case input query, weight, actual_seq_lengths_key, block_table, sparse_indices dim 0 must be same."),
-                   return ge::GRAPH_FAILED);
-        OPS_ERR_IF((opParamInfo_.actualSeqLengthsQ.tensor != nullptr) &&
-                       (opParamInfo_.actualSeqLengthsQ.tensor->GetShapeSize() != bSize_),
-                   OPS_LOG_E(opName_, "BSND case input query, actual_seq_lengths_query dim 0 are %u, %u respectively, they must be same",
-                        bSize_, opParamInfo_.actualSeqLengthsQ.tensor->GetShapeSize()),
-                   return ge::GRAPH_FAILED);
-        // -----------------------check S1-------------------
-        OPS_ERR_IF((opParamInfo_.weights.shape->GetStorageShape().GetDim(1) != s1Size_) ||
-                       (opParamInfo_.attenOut.shape->GetStorageShape().GetDim(1) != s1Size_),
-                   OPS_LOG_E(opName_, "BSND case input query, weight, sparse_indices dim 1 are %u, %u, %u, they must be same.",
-                        s1Size_, opParamInfo_.weights.shape->GetStorageShape().GetDim(1),
-                        opParamInfo_.attenOut.shape->GetStorageShape().GetDim(1)),
-                   return ge::GRAPH_FAILED);
+        if (ValidateInputShapesMatchQBsnd() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
         queryWeightsN1Dim = DIM_IDX_TWO;
         outN2Dim = DIM_IDX_TWO;
     }
