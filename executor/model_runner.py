@@ -17,7 +17,7 @@ import torch
 import torch_npu
 from transformers import AutoTokenizer
 
-from executor.utils import get_default_group, process_infer_time
+from executor.utils import get_default_group, process_infer_time, remove_padding_left, detokenize_outputs
 from executor.model_loader.default_loader import DefaultModelLoader
 from executor.model_loader.dummy_loader import DummyModelLoader
 from module.quantization import (QUANTIZATION_METHODS,
@@ -223,18 +223,11 @@ class ModelRunner:
         # before and after the text.
         if self.runner_settings.get("data_config").get("dataset", "default") != "default":
             from executor.utils.data_utils import build_dataset_input
-            prompts = build_dataset_input(self.tokenizer, prompts, self.input_max_len, self.max_new_tokens)
+            prompts = build_dataset_input(self.tokenizer, prompts, self.input_max_len,
+                                          self.max_new_tokens, is_chat=False)
         inputs = self.tokenizer(prompts, **kwargs).to(self.device)
 
         return inputs
-
-    def tokenizer_decode(self, generate_ids):
-        res = self.tokenizer.batch_decode(generate_ids, skip_special_tokens=True)
-        if isinstance(res, list):
-            logging.info("Inference decode result for batch 0: \n%s", res[0])
-        else:
-            logging.info("Inference decode result: \n%s", res)
-        return res
 
     def compile_model(self):
         logging.info("The final model structure is: \n %s", self.model)
@@ -356,8 +349,11 @@ class ModelRunner:
             logging.info(f"{self.model_name} average inference time cost is {(avg_infer_time)*1000:.2f} ms")
 
         # detokenize outputs
-        generate_ids = input_dict["generate_ids"][:, input_lens:].clip(0, self.model.config.vocab_size - 1)
-        return self.tokenizer_decode(generate_ids)
+        generate_ids = input_dict["generate_ids"].clip(0,\
+                            self.model.config.vocab_size - 1)
+        generate_ids_list = remove_padding_left(generate_ids, self.tokenizer.pad_token_id)
+        res_list = detokenize_outputs(generate_ids_list, self.tokenizer, input_lens)
+        return res_list
 
     def get_jump_flag(self, cnt, warm_up):
         default_decode_dump = 2

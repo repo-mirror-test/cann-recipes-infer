@@ -145,6 +145,7 @@ class MicroBatchMode(Enum):
 
 
 def remove_padding_left(tensor, pad_id):
+    # remove left padding tokens in mtp, pad_token_id may be equal to eos_token
     if tensor.shape[0] == 1:
         return [tensor[0]]
     if tensor.dim() != 2:
@@ -164,6 +165,20 @@ def remove_padding_left(tensor, pad_id):
 
     return output_tensorlist
 
+
+def detokenize_outputs(generate_ids_list, tokenizer, input_lens):
+    res_list = []
+    for generate_ids in generate_ids_list:
+        res = tokenizer.decode(generate_ids[input_lens:], skip_special_tokens=False)
+        if tokenizer.eos_token in res:
+            res = res.split(tokenizer.eos_token)[0]
+        res_list.append(res)
+    if isinstance(res_list, list):
+        logging.info("Inference decode result for batch 0: \n%s", res_list[0])
+    else:
+        logging.info("Inference decode result: \n%s", res_list)
+    return res_list
+    
 
 def check_common_parallel_settings(world_size, runner_settings):
     if world_size <= 0:

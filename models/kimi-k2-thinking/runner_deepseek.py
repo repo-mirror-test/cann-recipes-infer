@@ -23,7 +23,7 @@ import torch.distributed as dist
 import torch_npu
 import torch.nn as nn
 from models.modeling_deepseek import DeepseekV3ForCausalLM, DeepseekV3ModelMTP
-from executor.utils import override, get_init_attn_mask, process_infer_time, build_dataset_input
+from executor.utils import override, get_init_attn_mask
 from executor.model_runner import ModelRunner
 from executor.model_loader.default_loader import DefaultModelLoader
 from executor.model_loader.dummy_loader import DummyModelLoader

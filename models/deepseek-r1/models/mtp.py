@@ -19,7 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 
-from executor.utils import get_init_attn_mask, process_infer_time
+from executor.utils import get_init_attn_mask, process_infer_time, remove_padding_left, detokenize_outputs
 
 
 class InferMTP(nn.Module):
@@ -94,11 +94,13 @@ class InferMTP(nn.Module):
         if not warm_up:
             avg_infer_time = self.obtain_mtp_stats(total_accepted_num, cnt, infer_time_rec)
 
-        # to modify to print for each batch
         logging.info("Finish inference, cnt = %d, total_accepted_num = %d", cnt, total_accepted_num[0])
-        generate_ids = input_dict_main["generate_ids"][:, input_lens:].clip(0,\
+        # detokenize outputs
+        generate_ids = input_dict_main["generate_ids"].clip(0,\
                             self.main_model.model.config.vocab_size - 1)
-        return self.main_model.tokenizer_decode(generate_ids)
+        generate_ids_list = remove_padding_left(generate_ids, self.main_model.tokenizer.pad_token_id)
+        res_list = detokenize_outputs(generate_ids_list, self.main_model.tokenizer, input_lens)
+        return res_list
 
     def get_mtp_inputs(self, prompts):
         inputs = self.main_model.tokenize_prompts(prompts)

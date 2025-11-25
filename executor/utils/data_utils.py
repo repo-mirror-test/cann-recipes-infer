@@ -10,6 +10,7 @@
 import json
 import os
 import logging
+import math
 from datasets import load_dataset  # requires version == 3.6.0
 
 
@@ -98,14 +99,45 @@ def generate_prompt(runner_settings):
     return get_prompts_for_cur_rank(preset_prompts, batch_size, batch_size_per_rank, global_dp_rank)
 
 
-def build_dataset_input(tokenizer, prompts, input_max_len, max_new_tokens=32):
-    prompts_inputids = tokenizer(prompts).input_ids
+def tokenizer_in_loop(tokenizer, prompts, input_max_len=32, section_size=1024):
+    total_num = len(prompts)
+    if section_size <= 0:
+        raise ValueError(f"section_size must be positive, but got {section_size}.")
+    section_num = math.ceil(total_num / section_size)
+    input_ids_list = []
+    for i in range(section_num):
+        start_index = i * section_size
+        end_index = (i + 1) * section_size
+        each_prompts = prompts[start_index: end_index]
+        prompts_input_ids = tokenizer(each_prompts, truncation=True, max_length=input_max_len,
+                                      return_attention_mask=False).input_ids
+        input_ids_list.extend(prompts_input_ids)
+        logging.info(f"{len(input_ids_list)} of {total_num} prompts have been tokenized...")
+    return input_ids_list
+        
+
+def build_dataset_input(tokenizer, prompts, input_max_len, max_new_tokens=32, is_chat=False):
+    # Provide system prompt for the text; the default is aritcle continuation, which can be modified as needed.
+    prefix = "Please read a part of the book below, and then give me the summary.\n[start of the book]\n"
+    suffix = "\n[end of the book]\n\n" + \
+            "Now you have read it. Please summarize it for me. " + \
+            f"First, tell me the title and the author, and then tell the story in {max_new_tokens} words.\n\n "
+    if is_chat:
+        system_prompt_chat = [{"role": "user", "content": prefix + suffix}]
+        system_prompt_len = len(tokenizer.apply_chat_template(system_prompt_chat, add_generation_prompt=True))
+    else:
+        system_prompt_len = len(tokenizer(prefix + suffix).input_ids)
+    if system_prompt_len > input_max_len:
+        logging.info("The parameter 'input_max_len' should be greater than the length of system prompt. " + \
+         "Please modify the input_max_len in the YAML file or modify system prompt in executor/utils/data_utils.py.")
+    
+    # use tokenizer loop to avoid host oom when query num is large
+    input_ids_list = tokenizer_in_loop(tokenizer, prompts, input_max_len)
+    
     out_prompts = []
-    for prompt_inputids in prompts_inputids:
-        # Provide system prompt for the text; the default is a summary, which can be modified as needed.	
-        prompt = "Please read a part of the book below, and then give me the summary.\n[start of the book]\n" + \
-            tokenizer.decode(prompt_inputids[:input_max_len - 70], skip_special_tokens=True) + \
-            "\n[end of the book]\n\nNow you have read it. Please summarize it for me. " + \
-            "First, tell me the title and the author, and then tell the story in 400 words.\n\n"
+    for prompt_input_ids in input_ids_list:
+        prompt = prefix + \
+            tokenizer.decode(prompt_input_ids[:input_max_len - system_prompt_len], skip_special_tokens=True) + \
+            suffix
         out_prompts.append(prompt)
     return out_prompts

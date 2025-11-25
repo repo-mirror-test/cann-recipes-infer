@@ -362,7 +362,7 @@ class Infer(nn.Module):
         }
         if self.use_dataset:
             prompts = build_dataset_input(tokenizer, prompts, self.main_model.input_max_len,
-                                          self.main_model.max_new_tokens)
+                                          self.main_model.max_new_tokens, is_chat=True)
         input_prompts = []
         for prompt in prompts:
             input_prompts.append([{"role":"user", "content": prompt}])
