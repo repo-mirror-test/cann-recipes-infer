@@ -343,7 +343,7 @@ Decode阶段，每一层计算得到的当前Token的Cache更新到Host内存上
 
 > 注：性能数据基于 MTP3 与 perfect eplb 配置采集，平均 3 个 draft token 中 accept token 为 1.44 个。
 
-基于 Atlas A3 环境，在 DeepSeek-V3.2-Exp 模型使能 W8A8C8 量化的基础上，对 KVCache Offload 特性进行了 Benchmark 测试。同等序列长度下，通过使能 KVCache Offload 技术方案，相比非 Offload，模型推理支持的最大 batch size 可以翻倍。下图展示了 Offload 的内存收益，固定序列长度为 64K，相比非 Offlod，在使用 Offload 时 global batch size 可从 1024 增长到 2048；固定 global batch size 为 128，使用 Offload 时序列长度可从 256K 增长到 384K。
+基于 Atlas A3 环境，在 DeepSeek-V3.2-Exp 模型使能 W8A8C8 量化的基础上，对 KVCache Offload 特性进行了 Benchmark 测试。同等序列长度下，通过使能 KVCache Offload 技术方案，相比非 Offload，模型推理支持的最大 batch size 可以翻倍。下图展示了 Offload 的内存收益，固定序列长度为 64K，相比非 Offload，在使用 Offload 时 global batch size 可从 1024 增长到 2048；固定 global batch size 为 128，使用 Offload 时序列长度可从 256K 增长到 384K。
 
 <p align="center">
   <img src="./figures/offload_mem_bs.png" width="48%" alt="offload_mem_bs">

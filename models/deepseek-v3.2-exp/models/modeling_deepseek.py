@@ -1228,19 +1228,15 @@ class DeepseekIndexerAttention(nn.Module):
                 offload_cache.d2h_event.record()
                 with torch.npu.stream(offload_cache.d2h_stream):
                     offload_cache.d2h_event.wait()
-                    k_nope = nope_cache.view(bsz, -1, 1, self.last_dim)[:, :seq, ...]
-                    torch_npu.npu_scatter_nd_update_(
-                        past_key_value[self.layer_idx][0].view(-1, self.last_dim), 
-                        slot_mapping.view(-1, 1), 
-                        k_nope.view(-1, self.last_dim)
-                        )
+                    # Prefill Stage, data is contiguous, use 'copy_' to offload
+                    # all the cache of the current layer to the host memory.
+                    nope_cache_dst = past_key_value[self.layer_idx][0].view(bsz, -1, 1, self.last_dim)
+                    nope_cache_src = nope_cache.view(bsz, -1, 1, self.last_dim)
+                    nope_cache_dst.copy_(nope_cache_src, non_blocking=True)
                     if not self.kv_cache_c8:
-                        k_rope = rope_cache.view(bsz, -1, 1, self.qk_rope_head_dim)[:, :seq, ...]
-                        torch_npu.npu_scatter_nd_update_(
-                            past_key_value[self.layer_idx][1].view(-1, self.qk_rope_head_dim), 
-                            slot_mapping.view(-1, 1), 
-                            k_rope.view(-1, self.qk_rope_head_dim)
-                            )
+                        rope_cache_dst = past_key_value[self.layer_idx][1].view(bsz, -1, 1, self.qk_rope_head_dim)
+                        rope_cache_src = rope_cache.view(bsz, -1, 1, self.qk_rope_head_dim)
+                        rope_cache_dst.copy_(rope_cache_src, non_blocking=True)
                     offload_cache.d2h_event.record()
 
         query_states = (q_nope.view(bsz, -1, self.num_heads_per_rank, self.kv_lora_rank), \
@@ -1510,7 +1506,7 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
         _init_rope(self)
-        
+
     def get_input_embeddings(self):
         return self.embed_tokens
 
