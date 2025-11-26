@@ -351,9 +351,7 @@ __aicore__ inline void SFAAVectorService<SFAAT>::ElewiseCompute(const RunInfo &i
         uint64_t s2ValidSizeFirstPart = v0ValidSizeUb_.GetValue(128 + info.loop % MERGE_CACHE_GM_BUF_NUM);
         uint64_t s2ValidSizeSecondPart = v0ValidSizeUb_.GetValue(256 + info.loop % MERGE_CACHE_GM_BUF_NUM);
 
-        int64_t s2ProcessSize = info.s2Idx * constInfo.s2BaseSize + constInfo.s2BaseSize > info.actS2Size ?
-                                    info.actS2Size - info.s2Idx * constInfo.s2BaseSize :
-                                    constInfo.s2BaseSize;
+        int64_t s2ProcessSize = info.actualSingleProcessSInnerSize;
         int64_t s2Pair = CeilDiv(s2ProcessSize, 2L * constInfo.sparseBlockSize);
         int64_t s2Mid = CeilDiv(s2Pair, 2L) * 2 * constInfo.sparseBlockSize;
         if (s2Mid > s2ProcessSize) {
@@ -792,9 +790,7 @@ __aicore__ inline void SFAAVectorService<SFAAT>::CopyOutMrgeResult(int64_t mte2S
 template <typename SFAAT>
 __aicore__ inline void SFAAVectorService<SFAAT>::MergeKv(const RunInfo &runInfo)
 {
-    int64_t s2ProcessSize = runInfo.s2Idx * constInfo.s2BaseSize + constInfo.s2BaseSize > runInfo.actS2Size ?
-                                runInfo.actS2Size - runInfo.s2Idx * constInfo.s2BaseSize :
-                                constInfo.s2BaseSize;
+    int64_t s2ProcessSize = runInfo.actualSingleProcessSInnerSize;
     int64_t s2Pair = CeilDiv(s2ProcessSize, 2L * constInfo.sparseBlockSize);
     int64_t topkGmBaseOffset = 0;
 
