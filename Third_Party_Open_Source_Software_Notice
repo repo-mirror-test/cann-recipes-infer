@@ -3012,14 +3012,14 @@ The views and conclusions contained in the software and documentation are those 
 
 This project includes code snippets from the following open source projects:
 
-Software:
+Software: DeepSeek-V3.2-Exp
 Official Repository: https://huggingface.co/deepseek-ai/DeepSeek-V3.2-Exp/tree/main
 Usage: "
 models/deepseek-v3.2-exp/models/indexer.py,
 models/deepseek-v3.2-exp/models/modeling_deepseek.py,
 models/deepseek-v3.2-exp/models/configuration_deepseek.py
-" 
-Copyright Notice: 
+"
+Copyright Notice:
 Copyright 2023 DeepSeek-AI and The HuggingFace Inc. team
 License: MIT License
 Please see above
@@ -3041,24 +3041,24 @@ module/quantization/compressed_tensors/compressed_tensors_moe_gmm.py,
 module/quantization/compressed_tensors/compressed_tensors.py,
 module/quantization/compressed_tensors/compressed_tensors_scheme.py,
 module/quantization/compressed_tensors/utils.py
-" 
-Copyright Notice: 
+"
+Copyright Notice:
 Copyright (c) 2022, NVIDIA CORPORATION
 License: Apache License V2.0
 Please see above
 
 
-Software:
+Software: ModelZoo-PyTorch
 Official Repository: https://gitee.com/ascend/ModelZoo-PyTorch/blob/master
 Usage: "
 models/deepseek-v3.2-exp/utils/convert_model.py
-" 
-Copyright Notice: 
+"
+Copyright Notice:
 Copyright (c) 2025 Huawei Technologies Co., Ltd.
 License: Apache License V2.0
 Please see above
 
-Software:
+Software: Wan2.2
 Official Repository: https://modelers.cn/models/MindIE/Wan2.2/tree/main
 Usage:"
 models/Wan2.2-I2V/wan/vae_patch_parallel.py,
@@ -3066,7 +3066,7 @@ models/Wan2.2-I2V/wan/modules/attn_layer.py,
 models/Wan2.2-I2V/wan/distributed/comm.py,
 models/Wan2.2-I2V/wan/distributed/group_coordinator.py,
 models/Wan2.2-I2V/wan/distributed/parallel_mgr.py,
-" 
+"
 Copyright notice:
 Copyright (c) Huawei Technologies Co., Ltd. 2025.
 
@@ -3074,7 +3074,7 @@ License: Apache License V2.0
 Please see above
 
 
-Software:
+Software: Wan2.2
 Official Repository: https://github.com/Wan-Video/Wan2.2/tree/main
 Usage:"
 models/Wan2.2-I2V/run.sh,
@@ -3085,7 +3085,7 @@ models/Wan2.2-I2V/wan/modules/attention.py,
 models/Wan2.2-I2V/wan/modules/model.py,
 models/Wan2.2-I2V/wan/modules/vae2_1.py,
 models/Wan2.2-I2V/wan/distributed/util.py,
-" 
+"
 Copyright notice:
 Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 
@@ -3100,8 +3100,20 @@ hyvideo/config.py,
 hyvideo/diffusion/pipelines/pipeline_hunyuan_video.py,
 hyvideo/modules/models.py,
 hyvideo/modules/attention.py,
-" 
+"
 Copyright Notice:
 Copyright © 2024 Tencent. All Rights Reserved
 License:
+Please see above
+
+Software: DeepSeek-V3
+Official Repository: https://huggingface.co/deepseek-ai/DeepSeek-V3/tree/main/modeling_deepseek.py
+Usage: "
+models/deepseek-r1/models/modules.py,
+models/kimi-k2-thinking/models/modules.py,
+models/deepseek-v3.2-exp/models/modules.py
+"
+Copyright Notice:
+Copyright 2023 DeepSeek-AI and The HuggingFace Inc. team
+License: Apache License V2.0
 Please see above
