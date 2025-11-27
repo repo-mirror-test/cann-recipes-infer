@@ -62,7 +62,7 @@ custom.npu_lightning_indexer_quant(query, key, weights, query_dequant_scale, key
 
 ## 返回值说明<a name="zh-cn_topic_0000001832267082_section22231435517"></a>
 
--   **out**（`Tensor`）：公式中的输出，数据类型支持`int32`。数据格式支持ND。
+-   **out**（`Tensor`）：公式中的输出，数据类型支持`int32`。数据格式支持ND，输出shape[B,S1,N2,k];[T,N2,k]。
 
 ## 约束说明<a name="zh-cn_topic_0000001832267082_section12345537164214"></a>
 

@@ -64,7 +64,7 @@ custom.npu_sparse_flash_attention(Tensor query, Tensor key, Tensor value, Tensor
 
 ## 返回值说明<a name="zh-cn_topic_0000001832267082_section22231435517"></a>
 
--   **out**（`Tensor`）：公式中的输出。数据格式支持ND，数据类型支持`bfloat16`。
+-   **out**（`Tensor`）：公式中的输出。数据格式支持ND，数据类型支持`bfloat16`，输出shape[B,S1,N1,D];[T1,B1,D]。
 
 ## 约束说明<a name="zh-cn_topic_0000001832267082_section12345537164214"></a>
 
