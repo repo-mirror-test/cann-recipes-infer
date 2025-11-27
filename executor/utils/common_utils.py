@@ -102,6 +102,12 @@ def get_decode_mask(mask_length, device, position):
     return decode_mask
 
 
+def npu_wait_tensor(switch_flag: bool, out: torch.Tensor, wait_tensor: torch.Tensor):
+    if switch_flag:
+        out = tng.scope.npu_wait_tensor(out, wait_tensor)
+    return out
+    
+
 def npu_stream_switch(switch_flag: bool, stream_tag: str, stream_priority: int = 0):
     if switch_flag:
         return tng.scope.npu_stream_switch(stream_tag, stream_priority)

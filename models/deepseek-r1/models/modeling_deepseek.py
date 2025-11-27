@@ -46,7 +46,7 @@ from executor.utils import (
     init_comm_group, get_default_group, get_decode_mask)
 
 from executor.model_loader.weight_utils import default_weight_loader
-from executor.utils import npu_stream_switch, superkernel_scope, MicroBatchMode
+from executor.utils import npu_stream_switch, npu_wait_tensor, superkernel_scope, MicroBatchMode
 from module.linear import (
     ColumnParallelLinear,
     ReplicatedLinear,
@@ -205,7 +205,8 @@ class DeepseekV3MoE(nn.Module):
         self.moe_ep_size = self.runner_settings.get("parallel_config").get("moe_ep_size", 1)
         self.exe_mode = self.runner_settings.get("exe_mode", "eager")
         self.enable_multi_streams = runner_settings.get("model_config").get("enable_multi_streams", False)
-        self.enable_aclgraph = runner_settings.get("exe_mode", "ge_graph") == "acl_graph"
+        self.enable_aclgraph = runner_settings.get("exe_mode", "eager") == "acl_graph"
+        self.enable_gegraph = runner_settings.get("exe_mode", "eager") == "ge_graph"
         self.perfect_eplb = self.runner_settings.get("model_config").get("perfect_eplb", False)
         self.moe_chunk_max_len = self.runner_settings.get("model_config").get("moe_chunk_max_len", 65536)
         self.num_experts_per_tok = config.num_experts_per_tok
@@ -236,13 +237,14 @@ class DeepseekV3MoE(nn.Module):
         if config.n_shared_experts is not None:
             self.shared_experts = DeepseekV3SharedExpert(config, self.runner_settings,
                                         is_moe_layer=True, prefix=f"{prefix}.shared_experts", **kwargs)
-
         self.dispatch_kwargs = None
         self.combine_kwargs = None
         self.micro_batch_mode = MicroBatchMode(self.runner_settings.get("model_config").get("micro_batch_mode", 0))
         self.moe_ep_group = self.hccl_comm_dict.get("moe_ep_group_stream1", None) if\
             self.micro_batch_mode == MicroBatchMode.PREFILL_MICRO_BATCH_SP_TP_EP else\
             self.hccl_comm_dict.get("moe_ep_group", None)
+        self.enable_geraph_and_multistream = False
+        self.mm_quant_mode = runner_settings.get("model_config").get("mm_quant_mode", "A16W16")
 
     def _init_gate(self, prefix):
         self.top_k = self.config.num_experts_per_tok
@@ -400,36 +402,57 @@ class DeepseekV3MoE(nn.Module):
             }
 
     def forward(self, hidden_states, is_prefill=False, cur_topk_list=None):
-        if self.n_shared_experts > 0:
-            enable_multi_streams = self.enable_multi_streams and not is_prefill
-            use_aclgraph_event = enable_multi_streams and self.enable_aclgraph
-            if use_aclgraph_event:
-                tng.ops.npu_tagged_event_record(events[self.layer_idx])
-            with npu_stream_switch(enable_multi_streams, "11"):
-                # shared_expert use multi streams
-                if use_aclgraph_event:
-                    tng.ops.npu_tagged_event_wait(events[self.layer_idx])
-                hidden_states_share = self.shared_experts(hidden_states.view(-1, hidden_states.shape[-1]))
-                if use_aclgraph_event:
-                    tng.ops.npu_tagged_event_record(events[self.layer_idx + self.config.num_hidden_layers])
-        else:
-            use_aclgraph_event = False
-            hidden_states_share = None
-
+        enable_multi_streams = self.enable_multi_streams and not is_prefill
+        self.enable_geraph_and_multistream = (enable_multi_streams 
+                                              and self.enable_gegraph 
+                                              and (self.n_shared_experts > 0)
+                                              )
+        use_aclgraph_event = enable_multi_streams and self.enable_aclgraph
+        merged_x = None
+        pertoken_scale = None
         topk_idx, topk_weight, _ = self._forward_gate(hidden_states)
         if self.perfect_eplb:
             topk_idx = cur_topk_list
         topk_idx = topk_idx.to(torch.int32)
+
+        if self.n_shared_experts > 0:
+            if use_aclgraph_event:
+                tng.ops.npu_tagged_event_record(events[self.layer_idx])
+            if self.enable_geraph_and_multistream:
+                hidden_states_share = None
+                with npu_stream_switch(self.enable_geraph_and_multistream, "22"):
+                    hidden_states = npu_wait_tensor(True, hidden_states, topk_idx)
+                    if self.mm_quant_mode == "A8W8":
+                        merged_x, pertoken_scale = self.shared_experts.merge_up_gate_proj(
+                            hidden_states.view(-1, hidden_states.shape[-1]), 
+                            out_dtype=torch.int32
+                        )
+                    else:
+                        merged_x = self.shared_experts.merge_up_gate_proj(
+                            hidden_states.view(-1, hidden_states.shape[-1])
+                        )
+            else:
+                with npu_stream_switch(enable_multi_streams, "11"):
+                    # shared_expert use multi streams
+                    if use_aclgraph_event:
+                        tng.ops.npu_tagged_event_wait(events[self.layer_idx])
+                    hidden_states_share = self.shared_experts(hidden_states.view(-1, hidden_states.shape[-1]))
+                    if use_aclgraph_event:
+                        tng.ops.npu_tagged_event_record(events[self.layer_idx + self.config.num_hidden_layers])
+        else:
+            use_aclgraph_event = False
+            hidden_states_share = None
+
+        hidden_states_params = (hidden_states_share, use_aclgraph_event, merged_x, pertoken_scale)
         if self.moe_tp_size > 1:
             # MoE TP
-            return self.moe_infer_tp(hidden_states, topk_idx, topk_weight, hidden_states_share, use_aclgraph_event)
+            return self.moe_infer_tp(hidden_states, topk_idx, topk_weight, hidden_states_params)
         else:
             # MoE EP
             if is_prefill:
                 return self.moe_infer_double_routing(hidden_states, topk_idx, topk_weight, hidden_states_share)
             else:
-                return self.moe_infer_dispatch_combine(hidden_states, topk_idx, topk_weight, hidden_states_share,
-                                                       use_aclgraph_event)
+                return self.moe_infer_dispatch_combine(hidden_states, topk_idx, topk_weight, hidden_states_params)
 
     def forward_gate_init_routing(self, hidden_states, cur_topk_list=None):
         # gate
@@ -500,7 +523,19 @@ class DeepseekV3MoE(nn.Module):
         hidden_states = hidden_states.view(batch_size, sequence_length, h)
         return hidden_states
 
-    def moe_infer_tp(self, x, topk_ids, topk_weight, hidden_states_share, use_aclgraph_event):
+    def shared_experts_down_proj(self, intermediate_hidden_states, hidden_states_ordered_by_experts, pertoken_scale):
+        with npu_stream_switch(self.enable_geraph_and_multistream, "22"):
+            intermediate_hidden_states = npu_wait_tensor(
+                True, intermediate_hidden_states, hidden_states_ordered_by_experts
+            )
+            if self.mm_quant_mode == "A8W8":
+                hidden_states_share = self.shared_experts.down_proj(intermediate_hidden_states, pertoken_scale)
+            else:
+                hidden_states_share = self.shared_experts.down_proj(intermediate_hidden_states)
+        return hidden_states_share
+
+    def moe_infer_tp(self, x, topk_ids, topk_weight, hidden_states_params):
+        hidden_states_share, use_aclgraph_event, merged_x, pertoken_scale = hidden_states_params
         batch_size, sequence_length, h = x.shape
         hidden_states = x.view(-1, h)
         routing_args = {
@@ -532,7 +567,25 @@ class DeepseekV3MoE(nn.Module):
                 "group_list_type": 2,
                 "pertoken_scale": pertoken_scale
             })
+        if self.enable_geraph_and_multistream:
+            with npu_stream_switch(self.enable_geraph_and_multistream, "22"):
+                merged_x = npu_wait_tensor(True, merged_x, expanded_x)
+                if self.mm_quant_mode == "A8W8":
+                    intermediate_hidden_states, pertoken_scale = torch_npu.npu_dequant_swiglu_quant(
+                        merged_x, weight_scale=self.shared_experts.merge_up_gate_proj.weight_scale,
+                        quant_scale=self.shared_experts.down_proj.smooth_scales,
+                        quant_mode=1, activate_left=True,
+                        activation_scale=pertoken_scale
+                    )
+                else:
+                    intermediate_hidden_states = torch_npu.npu_swiglu(merged_x)
+
         hidden_states_ordered_by_experts = self.experts(expanded_x, tokens_per_expert, **moe_args)
+        if self.enable_geraph_and_multistream:
+            hidden_states_share = self.shared_experts_down_proj(
+                intermediate_hidden_states, hidden_states_ordered_by_experts, pertoken_scale
+            )
+
         if use_aclgraph_event:
             tng.ops.npu_tagged_event_wait(events[self.layer_idx + self.config.num_hidden_layers])
         hidden_states = torch_npu.npu_moe_finalize_routing(
@@ -620,10 +673,11 @@ class DeepseekV3MoE(nn.Module):
         hidden_states = torch.cat(hidden_states_list, dim=0) if len(hidden_states_list) > 1 else hidden_states_list[0]
         return hidden_states.view(batch_size, -1, h)
 
-    def moe_infer_dispatch_combine(self, x, topk_ids, topk_weight, hidden_states_share, use_aclgraph_event):
+    def moe_infer_dispatch_combine(self, x, topk_ids, topk_weight, hidden_states_params):
         """
         tp+ep mix strategy, for decode stage
         """
+        hidden_states_share, use_aclgraph_event, merged_x, pertoken_scale = hidden_states_params
         batch_size, sequence_length, h = x.shape
         hidden_states = x.view(-1, h)
         self.set_mc2_kwargs()
@@ -636,6 +690,19 @@ class DeepseekV3MoE(nn.Module):
         }
         output = torch_npu.npu_moe_distribute_dispatch_v2(**dispatch_args)
         expand_x, dynamic_scale, expand_idx, expert_token_num, ep_recv_counts, tp_recv_counts = output[:6]
+
+        if self.enable_geraph_and_multistream:
+            with npu_stream_switch(self.enable_geraph_and_multistream, "22"):
+                merged_x = npu_wait_tensor(True, merged_x, expand_x)
+                if self.mm_quant_mode == "A8W8":
+                    intermediate_hidden_states, pertoken_scale = torch_npu.npu_dequant_swiglu_quant(
+                        merged_x, weight_scale=self.shared_experts.merge_up_gate_proj.weight_scale,
+                        quant_scale=self.shared_experts.down_proj.smooth_scales,
+                        quant_mode=1, activate_left=True,
+                        activation_scale=pertoken_scale
+                    )
+                else:
+                    intermediate_hidden_states = torch_npu.npu_swiglu(merged_x)
 
         # compute experts
         gmm_args = {
@@ -654,7 +721,6 @@ class DeepseekV3MoE(nn.Module):
         # moe combine
         combine_args = {
             "expand_x": hidden_states_ordered_by_experts,
-            "shared_expert_x": hidden_states_share,
             "expert_ids": topk_ids,
             "assist_info_for_combine": expand_idx,
             "expert_scales": topk_weight.to(torch.float32), # [n*topk]
@@ -663,6 +729,13 @@ class DeepseekV3MoE(nn.Module):
             **self.combine_kwargs
         }
         hidden_states = torch_npu.npu_moe_distribute_combine_v2(**combine_args)
+
+        if self.enable_geraph_and_multistream:
+            hidden_states_share = self.shared_experts_down_proj(
+                intermediate_hidden_states, hidden_states_ordered_by_experts, pertoken_scale
+            )
+
+        hidden_states = hidden_states + hidden_states_share
 
         hidden_states = hidden_states.view(batch_size, sequence_length, self.hidden_dim)
         return hidden_states
@@ -1372,6 +1445,8 @@ class DeepseekV3DecoderLayer(nn.Module):
         self.post_attention_layernorm = DeepseekV3RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
+        self.enable_superkernel = self.runner_settings.get("model_config").get("enable_superkernel", False)
+        self.enable_multi_streams = runner_settings.get("model_config").get("enable_multi_streams", False)
 
     def forward(
         self,
@@ -1595,9 +1670,10 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         is_prefill: Optional[bool] = False,
         cur_topk_list: Optional[torch.Tensor] = None,
     ):
+
         label = f'decode_layer'
         if self.enable_multi_streams:
-            option = "stream-fusion=1" # 使能双流后，启用sk的双流选项
+            option = "stream-fusion=1" # if multi_streams is enabled, enable multi stream in superkernel
         else:
             option = "option_xxx2"
         with superkernel_scope(self.enable_superkernel and not is_prefill, label, option):
