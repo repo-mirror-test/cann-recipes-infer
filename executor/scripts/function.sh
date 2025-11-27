@@ -90,7 +90,7 @@ function check_env_vars()
             echo "[INFO] total ranks is ${DEVICE_SIZE}, and use ${WORLD_SIZE} ranks in actual!"
         else
             echo "[ERROR] total ranks is ${DEVICE_SIZE}, but use ${WORLD_SIZE} ranks in actual!"
-            exit 0
+            exit 1
         fi
     fi
 

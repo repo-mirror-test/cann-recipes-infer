@@ -1,0 +1,14 @@
+{
+    "cases": [
+        {
+            "case_id": "1",
+            "model_name": "deepseek-r1",
+            "yaml": "ci/decode_r1_rank_16_16ep_a8w8.yaml"
+        },
+        {
+            "case_id": "2", 
+            "model_name": "qwen3-moe",
+            "yaml": "ci/qwen3_235b_16tp.yaml"
+        }
+    ]
+}
