@@ -25,7 +25,7 @@ data_config:
 
 parallel_config:
   cp_size: 64                 # only active at prefill stage
-  oproj_tp_size: 8
+  oproj_tp_size: 1
   attn_tp_size: 1
   dense_tp_size: 1
   moe_tp_size: 1
