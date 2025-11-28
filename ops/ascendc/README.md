@@ -120,6 +120,7 @@
   ```
   Self-extractable archive "CANN-custom_ops-<cann_version>-linux.<arch>.run" successfully created.
   ```
+如果遇到版本校验拦截，可执行 bash build.sh --no-check-compitbale 命令跳过拦截，当前生成的自定义算子包："CANN-custom_ops-linux.<arch>.run"
 
 编译成功后在 `output` 目录生成自定义算子包：`CANN-custom_ops-<cann_version>-linux.<arch>.run`。其中，\<cann_version>表示软件版本号，\<arch>表示操作系统架构。
 
