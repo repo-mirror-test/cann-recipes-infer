@@ -594,7 +594,8 @@ ge::graphStatus LIQInfoParser::ValidateInputShapesMatch()
                    return ge::GRAPH_FAILED);
         OPS_ERR_IF((kLayout_ != DataLayout::PA_BSND) &&
                     ((opParamInfo_.weights.shape->GetStorageShape().GetDim(0) != bSize_) ||
-                    (opParamInfo_.actualSeqLengthsK.tensor->GetShapeSize() != bSize_) ||
+                    (opParamInfo_.actualSeqLengthsK.tensor != nullptr &&
+                     opParamInfo_.actualSeqLengthsK.tensor->GetShapeSize() != bSize_) ||
                     (opParamInfo_.attenOut.shape->GetStorageShape().GetDim(0) != bSize_)),
                    OPS_LOG_E(opName_,
                              "BSND case input query, weight, actual_seq_lengths_key, sparse_indices dim 0 are %u, %u, %u, %u respectively, they must be same.",
