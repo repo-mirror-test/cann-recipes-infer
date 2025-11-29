@@ -1062,6 +1062,7 @@ class DeepseekV3Attention(nn.Module):
         past_key_value: Optional[Cache] = None,
         attention_mask: Optional[torch.Tensor] = None,
         actual_seq_lengths_kv: list = None,
+        actual_seq_lengths_q: list = None,
         is_prefill: bool = True,
         slot_mapping: Optional[torch.Tensor] = None
     ):
@@ -1181,6 +1182,7 @@ class DeepseekV3Attention(nn.Module):
         past_key_value: Optional[Cache] = None,
         attention_mask: Optional[torch.Tensor] = None,
         actual_seq_lengths_kv: list = None,
+        actual_seq_lengths_q: list = None,
         is_prefill: bool = False,
         slot_mapping: Optional[torch.Tensor] = None
     ):
@@ -1252,22 +1254,28 @@ class DeepseekV3Attention(nn.Module):
         else:
             sparse_mode = 0
             attention_mask = None
+        bsz, q_len, num_heads, _ = q_nope.shape  # B,S,N,D
 
-        attn_output, _ = self.fa_ops.npu_fused_infer_attention_score(
-            query_states[0], k_nope, k_nope,
-            query_rope=query_states[1], key_rope=k_rope,
-            num_heads=self.num_heads_per_rank,
-            num_key_value_heads=self.num_key_value_heads_per_rank,
-            input_layout="BSND_NBSD",
-            block_table=self.block_table,
-            block_size=self.block_size,
+        q_nope = q_nope.contiguous().view(bsz * q_len, num_heads, -1)  # B,S,N,D -> B*S,N,D
+        q_pe = q_pe.contiguous().view(bsz * q_len, num_heads, -1)  # B,S,N,D -> B*S,N,D
+
+        attn_output, _ = self.fa_ops.npu_fused_infer_attention_score_v2(
+            q_nope, k_nope, k_nope,
+            query_rope=q_pe, key_rope=k_rope,
             atten_mask=attention_mask,
-            actual_seq_lengths_kv=actual_seq_lengths_kv,
-            scale=self.softmax_scale,
-            antiquant_mode=0, antiquant_scale=None,
-            sparse_mode=sparse_mode
+            actual_seq_kvlen=actual_seq_lengths_kv,
+            actual_seq_qlen=actual_seq_lengths_q,
+            block_table=self.block_table,
+            num_query_heads=self.num_heads_per_rank,
+            num_key_value_heads=self.num_key_value_heads_per_rank,
+            softmax_scale=self.softmax_scale,
+            input_layout="TND_NTD",
+            sparse_mode=sparse_mode,
+            block_size=self.block_size,
+            query_quant_mode=0,
+            key_quant_mode=0, value_quant_mode=0,
         )
-        attn_output = attn_output.view(self.num_heads_per_rank, -1, self.kv_lora_rank)
+
         attn_output = torch_npu.npu_transpose_batchmatmul(
             attn_output,
             self.kv_b_proj_w_v,
@@ -1292,6 +1300,7 @@ class DeepseekV3Attention(nn.Module):
         past_key_value: Optional[Cache] = None,
         attention_mask: Optional[torch.Tensor] = None,
         actual_seq_lengths_kv: list = None,
+        actual_seq_lengths_q: list = None,
         is_prefill: bool = False,
         slot_mapping: Optional[torch.Tensor] = None
     ):
@@ -1346,12 +1355,17 @@ class DeepseekV3Attention(nn.Module):
             sparse_mode = 0
             attention_mask = None
 
-        dequant_scale_query = dequant_scale_q_nope.view(bsz, q_len, -1) if self.kv_cache_c8 else None
+        bsz, q_len, num_heads, _ = q_nope.shape  # B,S,N,D
+        q_nope = q_nope.contiguous().view(bsz * q_len, num_heads, -1)  # B,S,N,D -> B*S,N,D
+        q_pe = q_pe.contiguous().view(bsz * q_len, num_heads, -1)  # B,S,N,D -> B*S,N,D
+
+        dequant_scale_query = dequant_scale_q_nope.view(bsz * q_len, -1) if self.kv_cache_c8 else None
         attn_output, _ = self.fa_ops.npu_fused_infer_attention_score_v2(
             q_nope, k_nope, k_nope,
             query_rope=q_pe, key_rope=k_rope,
             atten_mask=attention_mask,
             actual_seq_kvlen=actual_seq_lengths_kv,
+            actual_seq_qlen=actual_seq_lengths_q,
             block_table=self.block_table,
             dequant_scale_query=dequant_scale_query,
             dequant_scale_key=self.ckv_scale if self.kv_cache_c8 else None,
@@ -1359,13 +1373,13 @@ class DeepseekV3Attention(nn.Module):
             num_query_heads=self.num_heads_per_rank,
             num_key_value_heads=self.num_key_value_heads_per_rank,
             softmax_scale=self.softmax_scale,
-            input_layout="BSND_NBSD",
+            input_layout="TND_NTD",
             sparse_mode=sparse_mode,
             block_size=self.block_size,
             query_quant_mode=3 if self.kv_cache_c8 else 0,
             key_quant_mode=0, value_quant_mode=0,
         )
-        attn_output = attn_output.view(self.num_heads_per_rank, -1, self.kv_lora_rank)
+
         attn_output = torch_npu.npu_transpose_batchmatmul(
             attn_output,
             self.kv_b_proj_w_v,
@@ -1386,6 +1400,7 @@ class DeepseekV3Attention(nn.Module):
         hidden_states: torch.Tensor,
         kv_len: torch.IntTensor = None,
         actual_seq_lengths_kv: list = None,
+        actual_seq_lengths_q: list = None,
         cos_sin: torch.Tensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -1402,6 +1417,7 @@ class DeepseekV3Attention(nn.Module):
             "position_ids": position_ids,
             "past_key_value": past_key_value,
             "actual_seq_lengths_kv": actual_seq_lengths_kv,
+            "actual_seq_lengths_q": actual_seq_lengths_q,
             "attention_mask": attention_mask,
             "is_prefill": is_prefill,
             "slot_mapping": slot_mapping
@@ -1454,6 +1470,7 @@ class DeepseekV3DecoderLayer(nn.Module):
         kv_len: torch.IntTensor,
         actual_seq_lengths_kv: list,
         cos_sin: torch.Tensor,
+        actual_seq_lengths_q: list = None,
         past_residual: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -1470,6 +1487,7 @@ class DeepseekV3DecoderLayer(nn.Module):
             hidden_states=hidden_states,
             kv_len=kv_len,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
+            actual_seq_lengths_q=actual_seq_lengths_q,
             cos_sin=cos_sin,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -1664,6 +1682,7 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         input_ids: torch.LongTensor,
         kv_len: torch.IntTensor = None,
         actual_seq_lengths_kv: list = None,
+        actual_seq_lengths_q: list = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
@@ -1702,6 +1721,7 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
                         hidden_states,
                         kv_len,
                         actual_seq_lengths_kv,
+                        actual_seq_lengths_q=actual_seq_lengths_q,
                         cos_sin=cos_sin,
                         past_residual=residual,
                         attention_mask=attention_mask,
@@ -2117,6 +2137,7 @@ class DeepseekV3ModelMTPLayer(DeepseekV3Model):
         kv_len: torch.IntTensor,
         actual_seq_lengths_kv: list,
         cos_sin: torch.Tensor,
+        actual_seq_lengths_q: list = None,
         past_residual: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -2132,6 +2153,7 @@ class DeepseekV3ModelMTPLayer(DeepseekV3Model):
             kv_len,
             actual_seq_lengths_kv,
             cos_sin=cos_sin,
+            actual_seq_lengths_q=actual_seq_lengths_q,
             past_residual=past_residual,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -2361,6 +2383,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         input_ids: torch.LongTensor = None,
         kv_len: torch.IntTensor = None,
         actual_seq_lengths_kv: list = None,
+        actual_seq_lengths_q: list = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
@@ -2374,6 +2397,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             input_ids=input_ids,
             kv_len=kv_len,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
+            actual_seq_lengths_q=actual_seq_lengths_q,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -2535,6 +2559,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         batch_size, seq_len = input_ids.size()
         # use reshape to avoid stride change, which will cause recompile in mtp case
         input_ids = input_ids.contiguous().reshape(batch_size, seq_len)
+        actual_seq_lengths_q = None
         if past_key_values is None:
             raise ValueError("past_key_values should be initialized first!")
         if is_prefill:
@@ -2551,6 +2576,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                 kv_len = torch.zeros(batch_size, dtype=torch.int64, device=input_ids.device)
                 actual_seq_lengths_kv = None
         else:
+            actual_seq_lengths_q = torch.tensor([seq_len + i * seq_len for i in range(batch_size)],
+                                                dtype=torch.int64).npu()
             if seq_len > 1: # fa requires sparse mode 3 and 2048 * 2048 mask for mtp
                 attention_mask = get_init_attn_mask(2048, kv_len.device)
                 last_kv = torch.max(kv_len, axis=1)[0]
@@ -2559,6 +2586,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                     actual_seq_lengths_kv = (last_kv + 1)
                 else:
                     actual_seq_lengths_kv = (last_kv + 1).cpu().detach().tolist()
+                    actual_seq_lengths_q = actual_seq_lengths_q.cpu().detach().tolist()
 
             else:
                 attention_mask = None
@@ -2567,8 +2595,10 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                     actual_seq_lengths_kv = (kv_len + 1)
                 else:
                     actual_seq_lengths_kv = (kv_len + 1).cpu().detach().tolist()
+                    actual_seq_lengths_q = actual_seq_lengths_q.cpu().detach().tolist()
 
             position_ids = kv_len.view(-1, 1)
+
         # attention_mask set
         if not self.enable_pa:
             if is_prefill:
@@ -2600,6 +2630,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             "attention_mask": attention_mask,
             "kv_len": kv_len,
             "actual_seq_lengths_kv": actual_seq_lengths_kv,
+            "actual_seq_lengths_q": actual_seq_lengths_q,
             "prev_hidden_states": prev_hidden_states,
         }
         return model_inputs
@@ -2750,6 +2781,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
         input_ids: torch.LongTensor,
         kv_len: torch.IntTensor = None,
         actual_seq_lengths_kv: list = None,
+        actual_seq_lengths_q: list = None,
         prev_hidden_states: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -2789,6 +2821,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
             hidden_states,
             kv_len,
             actual_seq_lengths_kv,
+            actual_seq_lengths_q=actual_seq_lengths_q,
             cos_sin=cos_sin,
             past_residual=residual,
             attention_mask=attention_mask,
