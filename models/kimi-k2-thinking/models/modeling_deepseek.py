@@ -643,6 +643,7 @@ class DeepseekAttention(nn.Module):
         self.config = config
         self.runner_settings = runner_settings
         self.mm_quant_mode = runner_settings.get("model_config").get("mm_quant_mode", "A16W16")
+        self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
         self.batch_size = self.runner_settings.get("data_config").get("batch_size", 16)
         self.batch_size_per_rank = self.runner_settings.get("data_config").get("batch_size_per_rank", 1)
         self.attn_tp_size = self.runner_settings.get("parallel_config").get("attn_tp_size", 1)
@@ -1004,6 +1005,12 @@ class DeepseekAttention(nn.Module):
         sin = sin.view(-1, 1, 1, self.qk_rope_head_dim)
         hidden_states = hidden_states.view(bsz * q_len, -1)
 
+        # FA need NZ mode cache, but if cp_size > 1, mla_prolog need PA_BSND and scatter will enable cache to PA_NZ
+        if self.cp_size > 1:
+            cache_mode = "PA_BSND"
+        else:
+            cache_mode = "PA_NZ"
+
         mla_prolog_input_args = {
             "token_x": hidden_states,
             "weight_dq": self.q_a_proj.weight,
@@ -1019,7 +1026,7 @@ class DeepseekAttention(nn.Module):
             "cache_index": mla_prolog_slot_mapping.view(-1),
             "rmsnorm_epsilon_cq": self.q_a_layernorm.variance_epsilon,
             "rmsnorm_epsilon_ckv": self.kv_a_layernorm.variance_epsilon,
-            "cache_mode": "PA_NZ",
+            "cache_mode": cache_mode,
             "query_norm_flag": True,
             "weight_quant_mode": 0
         }
@@ -1047,12 +1054,24 @@ class DeepseekAttention(nn.Module):
             
             k_nope = latent_cache.view(-1, latent_cache.shape[-1])[:, : nope_cache.shape[-1]]
             k_pe = latent_cache.view(-1, latent_cache.shape[-1])[:, nope_cache.shape[-1]:]
-            torch_npu.npu_scatter_nd_update_(nope_cache.view(-1, nope_cache.shape[-1]),
-                                            slot_mapping.view(-1, 1),
-                                            k_nope.view(-1, k_nope.shape[-1]))
-            torch_npu.npu_scatter_nd_update_(rope_cache.view(-1, self.qk_rope_head_dim),
-                                            slot_mapping.view(-1, 1),
-                                            k_pe.view(-1, k_pe.shape[-1]))
+            
+            block_num, block_size, kv_num, _ = nope_cache.shape
+            # To improve performance, KVCache uses the NZ layout
+            # The NZ fractal size is 16 for BF16 and 32 for INT8
+            # Therefore, we define a factor: 1*16 for BF16 and 2*16 for INT8
+            factor = 2 if self.kv_cache_c8 else 1
+            KV_CACHE_NZ_DIM = 16 * factor
+            torch_npu.npu_scatter_pa_kv_cache(k_nope.contiguous().unsqueeze(1),
+                                              k_pe.contiguous().unsqueeze(1),
+                                              nope_cache.view(block_num,
+                                                              (kv_num * nope_cache.shape[-1]) // KV_CACHE_NZ_DIM,
+                                                              block_size,
+                                                              KV_CACHE_NZ_DIM),
+                                              rope_cache.view(block_num,
+                                                              (kv_num * rope_cache.shape[-1]) // KV_CACHE_NZ_DIM,
+                                                              block_size,
+                                                              KV_CACHE_NZ_DIM),
+                                              slot_mapping)
         
         return q_nope, q_pe, qr, nope_cache, rope_cache
 
@@ -1147,7 +1166,11 @@ class DeepseekAttention(nn.Module):
 
         # adapter nz
         block_num, block_size, kv_num, dim = k_nope.shape
-        KV_CACHE_NZ_DIM = 16
+        # To improve performance, KVCache uses the NZ layout
+        # The NZ fractal size is 16 for BF16 and 32 for INT8
+        # Therefore, we define a factor: 1*16 for BF16 and 2*16 for INT8
+        factor = 2 if self.kv_cache_c8 else 1
+        KV_CACHE_NZ_DIM = 16 * factor
         k_nope = k_nope.view(block_num, kv_num, self.kv_lora_rank // KV_CACHE_NZ_DIM, block_size, KV_CACHE_NZ_DIM)
         k_pe = k_pe.view(block_num, kv_num, self.qk_rope_head_dim // KV_CACHE_NZ_DIM, block_size, KV_CACHE_NZ_DIM)
 
