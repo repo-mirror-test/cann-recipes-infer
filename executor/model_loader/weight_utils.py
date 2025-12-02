@@ -77,8 +77,7 @@ _BAR_FORMAT = \
 
 
 def enable_tqdm(use_tqdm_on_load: bool):
-    return use_tqdm_on_load and (not torch.distributed.is_initialized()
-                                 or torch.distributed.get_rank() == 0)
+    return use_tqdm_on_load
 
 
 def safetensors_weights_iterator(
