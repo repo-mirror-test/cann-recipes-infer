@@ -166,7 +166,8 @@ class DeepSeekRunner(ModelRunner):
     @override
     def graph_compile(self):
         import torchair as tng
-        tng.patch_for_hcom()
+        if torch.__version__ < "2.5.0":
+            tng.patch_for_hcom()
         from torchair.configs.compiler_config import CompilerConfig
         use_aclgraph = self.execute_mode == "acl_graph"
 
@@ -176,6 +177,7 @@ class DeepSeekRunner(ModelRunner):
         compiler_config.experimental_config.topology_sorting_strategy = "StableRDFS"
         if use_aclgraph:
             compiler_config.mode = "reduce-overhead"
+            compiler_config.experimental_config.aclgraph._aclnn_static_shape_kernel = True
             if torch.__version__ < "2.5.0":
                 compiler_config.debug.aclgraph.disable_reinplace_inplaceable_ops_pass = (
                     True

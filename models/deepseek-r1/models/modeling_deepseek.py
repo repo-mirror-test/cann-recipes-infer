@@ -318,7 +318,7 @@ class DeepseekV3MoE(nn.Module):
             )[
                 1
             ]  # [n, top_k_group]
-            group_mask = torch.zeros_like(group_scores)  # [n, n_group]
+            group_mask = torch.empty_like(group_scores)  # [n, n_group]
             group_mask.scatter_(1, group_idx, 1)  # [n, n_group]
             score_mask = (
                 group_mask.unsqueeze(-1)
@@ -403,8 +403,8 @@ class DeepseekV3MoE(nn.Module):
 
     def forward(self, hidden_states, is_prefill=False, cur_topk_list=None):
         enable_multi_streams = self.enable_multi_streams and not is_prefill
-        self.enable_geraph_and_multistream = (enable_multi_streams 
-                                              and self.enable_gegraph 
+        self.enable_geraph_and_multistream = (enable_multi_streams
+                                              and self.enable_gegraph
                                               and (self.n_shared_experts > 0)
                                               )
         use_aclgraph_event = enable_multi_streams and self.enable_aclgraph
@@ -424,7 +424,7 @@ class DeepseekV3MoE(nn.Module):
                     hidden_states = npu_wait_tensor(True, hidden_states, topk_idx)
                     if self.mm_quant_mode == "A8W8":
                         merged_x, pertoken_scale = self.shared_experts.merge_up_gate_proj(
-                            hidden_states.view(-1, hidden_states.shape[-1]), 
+                            hidden_states.view(-1, hidden_states.shape[-1]),
                             out_dtype=torch.int32
                         )
                     else:
@@ -555,7 +555,7 @@ class DeepseekV3MoE(nn.Module):
                 "row_idx_type": 0,
                 "drop_pad_mode": 0
             })
-        # The A8W8 quantization scenario npu_moe_init_routing_v2 operator is fused with the subsequent 
+        # The A8W8 quantization scenario npu_moe_init_routing_v2 operator is fused with the subsequent
         # dynamicquant operator, outputting INT8 data and the corresponding pertoken_scale.
         expanded_x, expanded_row_idx, tokens_per_expert, dynamic_scale = torch_npu.npu_moe_init_routing_v2(
             hidden_states, **routing_args
@@ -612,7 +612,7 @@ class DeepseekV3MoE(nn.Module):
         combine_tokens = combine_tokens.view(2, self.moe_ep_size, -1).sum(2)
         all_tokens = combine_tokens[0].sum()
         combine_tokens_cpu = combine_tokens.cpu().tolist()
-        # alltoall input splits, the size is the total number 
+        # alltoall input splits, the size is the total number
         # of tokens that the current rank routes to other ranks
         input_splits = combine_tokens_cpu[1]
         # alltoall output splits, the size is the number of tokens
@@ -2358,16 +2358,16 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             hidden_states = outputs
         else:
             # allgather: (bs / attn_dp, hidden_size) -> (bs, hidden_size)
-            hidden_states = torch.zeros_like(outputs).repeat(self.lmhead_tp_size, 1, 1)
+            hidden_states = torch.empty_like(outputs).repeat(self.lmhead_tp_size, 1, 1)
             dist.all_gather_into_tensor(hidden_states, outputs, group=self.hccl_comm_dict.get("lmhead_tp_group", None))
 
         logits = self.lm_head(hidden_states) # (lmhead_tp_size * bs / attn_dp, 1, vocab_size / lmhead_tp_size)
         if self.lmhead_tp_size > 1: # -> (bs / attn_dp, 1, vocab_size)
             if self.attn_dp_size == 1:
-                new_logits = torch.zeros_like(logits).repeat(self.lmhead_tp_size, 1, 1)
+                new_logits = torch.empty_like(logits).repeat(self.lmhead_tp_size, 1, 1)
                 dist.all_gather_into_tensor(new_logits, logits, group=self.hccl_comm_dict.get("lmhead_tp_group", None))
             else:
-                new_logits = torch.zeros_like(logits).view(-1)
+                new_logits = torch.empty_like(logits).view(-1)
                 dist.all_to_all_single(new_logits, logits.view(-1), \
                         group=self.hccl_comm_dict.get("lmhead_tp_group", None))
 
@@ -2407,7 +2407,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
 
         # attention: SP + TP，moe：DP + EP
         if is_prefill and self.is_sp:
-            new_outputs = torch.zeros_like(outputs).repeat(self.attn_tp_size, 1, 1)
+            new_outputs = torch.empty_like(outputs).repeat(self.attn_tp_size, 1, 1)
             dist.all_gather_into_tensor(new_outputs, outputs, group=self.hccl_comm_dict.get("attn_tp_group", None))
             outputs = new_outputs
         prev_hidden_states = outputs
@@ -2835,7 +2835,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
         prev_hidden_states, _ = self.shared_head_norm(hidden_states, residual)
         # attention: SP + TP，moe：DP + EP
         if is_prefill and self.is_sp:
-            new_outputs = torch.zeros_like(prev_hidden_states).repeat(self.attn_tp_size, 1, 1)
+            new_outputs = torch.empty_like(prev_hidden_states).repeat(self.attn_tp_size, 1, 1)
             dist.all_gather_into_tensor(new_outputs, prev_hidden_states,
                                         group=self.hccl_comm_dict.get("attn_tp_group", None))
             prev_hidden_states = new_outputs
