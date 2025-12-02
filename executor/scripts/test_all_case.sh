@@ -18,6 +18,20 @@
 source set_env.sh
 source function.sh
 
+function extract_result()
+{
+    # Extract inference result from log_0.log,
+    # If multiple queries are input, only show the result of the last query.
+    find res -name "log_0.log" -exec sh -c '
+        for file do
+            echo "=== The following contents are extracted from the [$file] ==="
+            tac "$file" | sed -n "/run success/,/decode result/{p; /decode result/q}" | tac
+            echo ""
+            echo ""
+        done
+    ' sh {} +
+}
+
 models=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -76,4 +90,5 @@ for model in "${model_array[@]}"; do
         echo '----------------finish test case' $yaml_file '----------------'
     done
 done
+extract_result > all_case_rank0_result.log 2>&1
 echo '----------------all case pass----------------'

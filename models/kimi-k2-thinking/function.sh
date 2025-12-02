@@ -144,18 +144,6 @@ function launch_infer_task()
     done
 }
 
-function launch_split_weight_task()
-{
-    for((i=0; i<${MA_NUM_GPUS}; i++))
-    do
-        echo $i
-        export LOCAL_RANK=$i
-        export RANK_ID=$(expr $i + $RANK_OFFSET)
-        python3 split_weight.py --model_path ${MODEL_PATH_ORIGIN} --output_path ${MODEL_PATH_OUTPUT} \
-                        --yaml ${YAML} --world_size ${WORLD_SIZE} --rank_id ${RANK_ID}
-    done
-}
-
 function save_key_info()
 {
     wait
