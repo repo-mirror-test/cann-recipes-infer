@@ -557,7 +557,7 @@ class DeepseekV3MoE(nn.Module):
             })
         # The A8W8 quantization scenario npu_moe_init_routing_v2 operator is fused with the subsequent 
         # dynamicquant operator, outputting INT8 data and the corresponding pertoken_scale.
-        expanded_x, expanded_row_idx, tokens_per_expert, pertoken_scale = torch_npu.npu_moe_init_routing_v2(
+        expanded_x, expanded_row_idx, tokens_per_expert, dynamic_scale = torch_npu.npu_moe_init_routing_v2(
             hidden_states, **routing_args
         )
 
@@ -565,7 +565,7 @@ class DeepseekV3MoE(nn.Module):
         if self.gmm_quant_mode == "A8W8":
             moe_args.update({
                 "group_list_type": 2,
-                "pertoken_scale": pertoken_scale
+                "pertoken_scale": dynamic_scale
             })
         if self.enable_geraph_and_multistream:
             with npu_stream_switch(self.enable_geraph_and_multistream, "22"):
