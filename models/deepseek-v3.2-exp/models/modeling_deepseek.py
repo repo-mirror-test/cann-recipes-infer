@@ -231,7 +231,8 @@ class DeepseekV3MoE(nn.Module):
             num_experts=config.n_routed_experts,
             hidden_size=self.hidden_dim,
             intermediate_size=self.intermediate_size,
-            bias=False,
+            # when W4A8 is enabled, gmm kernel needs an auxiliary matrix, it will be passed in as a bias
+            bias=True if self.gmm_quant_mode == "W4A8" else False,
             quant_config=config.quant_config,
             tp_size=self.moe_tp_size,
             tp_rank=dist.get_rank(self.hccl_comm_dict["moe_tp_group"]) if self.moe_tp_size > 1 else 0,

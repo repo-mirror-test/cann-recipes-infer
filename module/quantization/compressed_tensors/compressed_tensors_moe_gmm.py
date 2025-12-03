@@ -38,9 +38,11 @@ class CompressedTensorsMoEGMMMethod(QuantizeMethodBase):
 
         if quant_config.is_wNa16_group_channel(weight_quant, input_quant):
             if weight_quant.num_bits == 4:
-                return CompressedTensorW4A16Int8MoEGMMMethod(quant_config)
+                return CompressedTensorW4A16Int4MoEGMMMethod(quant_config)
         elif quant_config.is_dynamic_token_w8a8(weight_quant, input_quant):
             return CompressedTensorW8A8Int8MoEGMMMethod()
+        elif quant_config.is_dynamic_token_w4a8(weight_quant, input_quant):
+            return CompressedTensorW4A8Int8MoEGMMMethod()
         else:
             raise RuntimeError(
                 f"Unsupported FusedMoe scheme: {weight_quant}, {input_quant}")
@@ -98,13 +100,15 @@ class CompressedTensorW8A8Int8MoEGMMMethod(QuantizeMethodBase):
         layer.register_parameter("smooth_scale_1", smooth_scale_1)
         layer.register_parameter("smooth_scale_2", smooth_scale_2)
 
-    def apply(self,
-              layer: torch.nn.Module,
-              x: torch.Tensor,
-              expert_tokens: torch.Tensor,
-              group_list_type: int,
-              pertoken_scale: torch.Tensor = None,
-              final_output_dtype: torch.dtype = torch.bfloat16,):
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        expert_tokens: torch.Tensor,
+        group_list_type: int,
+        pertoken_scale: torch.Tensor = None,
+        final_output_dtype: torch.dtype = torch.bfloat16
+    ):
         hidden_size = x.size(-1)
 
         if pertoken_scale is None:
@@ -114,12 +118,13 @@ class CompressedTensorW8A8Int8MoEGMMMethod(QuantizeMethodBase):
             pertoken_scale = pertoken_scale.reshape(-1)
             x = x.view(-1, hidden_size)
 
-        mm1_mm3 = torch_npu.npu_grouped_matmul([x], [layer.w13_weight],
-                                                group_list=expert_tokens, split_item=3,
-                                                output_dtype=torch.int32, group_type=0,
-                                                group_list_type=group_list_type,
-                                                tuning_config=[0]
-                                                )[0]
+        mm1_mm3 = torch_npu.npu_grouped_matmul(
+            [x], [layer.w13_weight],
+            group_list=expert_tokens, split_item=3,
+            output_dtype=torch.int32, group_type=0,
+            group_list_type=group_list_type,
+            tuning_config=[0]
+        )[0]
 
         intermediate_h, pertoken_scale = torch_npu.npu_dequant_swiglu_quant(
             mm1_mm3, weight_scale=layer.w13_weight_scale,
@@ -141,11 +146,12 @@ class CompressedTensorW8A8Int8MoEGMMMethod(QuantizeMethodBase):
 
         return out_hidden
 
-    def process_weights_after_loading(self, layer: torch.nn.Module,
-                                      is_transpose: bool = True,
-                                      is_nz: bool = True,
-                                      **kwargs,
-                                      ) -> None:
+    def process_weights_after_loading(
+        self, layer: torch.nn.Module,
+        is_transpose: bool = True,
+        is_nz: bool = True,
+        **kwargs,
+    ) -> None:
         w13_weight = layer.w13_weight
         w2_weight = layer.w2_weight
         if is_transpose:
@@ -161,7 +167,7 @@ class CompressedTensorW8A8Int8MoEGMMMethod(QuantizeMethodBase):
         layer.w2_weight = Parameter(w2_weight, requires_grad=False)
 
 
-class CompressedTensorW4A16Int8MoEGMMMethod(QuantizeMethodBase):
+class CompressedTensorW4A16Int4MoEGMMMethod(QuantizeMethodBase):
     def __init__(
             self,
             quant_config: "CompressedTensorsConfig",
@@ -244,20 +250,22 @@ class CompressedTensorW4A16Int8MoEGMMMethod(QuantizeMethodBase):
         layer.register_parameter("smooth_scale_2", smooth_scale_2)
 
     def apply(self,
-              layer: torch.nn.Module,
-              x: torch.Tensor,
-              expert_tokens: torch.Tensor,
-              group_list_type: int,
-              pertoken_scale: torch.Tensor = None,
-              final_output_dtype: torch.dtype = torch.bfloat16,):
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        expert_tokens: torch.Tensor,
+        group_list_type: int,
+        pertoken_scale: torch.Tensor = None,
+        final_output_dtype: torch.dtype = torch.bfloat16
+    ):
         
-        mm1_mm3 = torch_npu.npu_grouped_matmul([x], [layer.w13_weight],
-                                                antiquant_scale=[layer.w13_weight_scale],
-                                                antiquant_offset=[layer.w13_offset],
-                                                group_list=expert_tokens, split_item=3,
-                                                output_dtype=x.dtype, group_type=0,
-                                                group_list_type=group_list_type,
-                                                )[0]
+        mm1_mm3 = torch_npu.npu_grouped_matmul(
+            [x], [layer.w13_weight],
+            antiquant_scale=[layer.w13_weight_scale],
+            antiquant_offset=[layer.w13_offset],
+            group_list=expert_tokens, split_item=3,
+            output_dtype=x.dtype, group_type=0,
+            group_list_type=group_list_type,
+        )[0]
 
         intermediate_h = torch_npu.npu_swiglu(mm1_mm3)
 
@@ -272,11 +280,12 @@ class CompressedTensorW4A16Int8MoEGMMMethod(QuantizeMethodBase):
 
         return out_hidden
 
-    def process_weights_after_loading(self, layer: torch.nn.Module,
-                                      is_transpose: bool = True,
-                                      is_nz: bool = True,
-                                      **kwargs,
-                                      ) -> None:
+    def process_weights_after_loading(
+        self, layer: torch.nn.Module,
+        is_transpose: bool = True,
+        is_nz: bool = True,
+        **kwargs,
+    ) -> None:
         w13_weight = layer.w13_weight
         w2_weight = layer.w2_weight
         
@@ -379,3 +388,153 @@ class CompressedTensorW4A16Int8MoEGMMMethod(QuantizeMethodBase):
         else:
             raise ValueError(f"{weight.dtype=} is not supported !")
         return new_weight
+
+
+class CompressedTensorW4A8Int8MoEGMMMethod(QuantizeMethodBase):
+    def __init__(
+            self,
+    ):
+        STORAGE_BITS_NPU = 8
+        WEIGHT_BITS = 4
+        self.pack_factor = STORAGE_BITS_NPU // WEIGHT_BITS
+        
+    def create_weights(
+        self,
+        layer: torch.nn.Module,
+        num_experts: int,
+        hidden_size: int,
+        intermediate_size_per_partition: int,
+        params_dtype: torch.dtype,
+        **extra_weight_attrs,
+    ) -> None:
+        # Fused gate_up_proj (column parallel)
+        w13_weight = torch.nn.Parameter(torch.empty(num_experts,
+                                                    2 * intermediate_size_per_partition // self.pack_factor,
+                                                    hidden_size,
+                                                    dtype=torch.int8),
+                                        requires_grad=False)
+        layer.register_parameter("w13_weight", w13_weight)
+        set_weight_attrs(w13_weight, extra_weight_attrs)
+
+        # down_proj (row parallel)
+        w2_weight = torch.nn.Parameter(torch.empty(num_experts,
+                                                    hidden_size // self.pack_factor,
+                                                    intermediate_size_per_partition,
+                                                    dtype=torch.int8),
+                                        requires_grad=False)
+        layer.register_parameter("w2_weight", w2_weight)
+        set_weight_attrs(w2_weight, extra_weight_attrs)
+        
+        w13_bias = torch.nn.Parameter(torch.empty(num_experts,
+                                                  2 * intermediate_size_per_partition,
+                                                  dtype=torch.float),
+                                       requires_grad=False)
+        layer.register_parameter("w13_bias", w13_bias)
+        set_weight_attrs(w13_bias, extra_weight_attrs)
+
+        w2_bias = torch.nn.Parameter(torch.empty(num_experts,
+                                                 hidden_size,
+                                                 dtype=torch.float),
+                                      requires_grad=False)
+        layer.register_parameter("w2_bias", w2_bias)
+        set_weight_attrs(w2_bias, extra_weight_attrs)
+
+        extra_weight_attrs.update(
+            {"quant_method": FusedMoeWeightScaleSupported.CHANNEL.value})
+
+        w13_scale = torch.nn.Parameter(torch.ones(num_experts,
+                                                  2 * intermediate_size_per_partition,
+                                                  dtype=torch.int64),
+                                       requires_grad=False)
+        layer.register_parameter("w13_weight_scale", w13_scale)
+        set_weight_attrs(w13_scale, extra_weight_attrs)
+        
+        w2_scale = torch.nn.Parameter(torch.ones(num_experts,
+                                                 hidden_size,
+                                                 dtype=torch.int64),
+                                      requires_grad=False)
+        layer.register_parameter("w2_weight_scale", w2_scale)
+        set_weight_attrs(w2_scale, extra_weight_attrs)
+        smooth_scale_1 = Parameter(torch.ones((num_experts, hidden_size), dtype=torch.float), requires_grad=False)
+        smooth_scale_2 = Parameter(torch.ones((num_experts, intermediate_size_per_partition),
+                                              dtype=torch.float),
+                                   requires_grad=False)
+        layer.register_parameter("smooth_scale_1", smooth_scale_1)
+        layer.register_parameter("smooth_scale_2", smooth_scale_2)
+        
+        # alpha is a factor for clip kernel
+        w2_alpha = torch.nn.Parameter(torch.ones(num_experts, dtype=torch.float), requires_grad=False)
+        layer.register_parameter("w2_alpha", w2_alpha)
+        set_weight_attrs(w2_alpha, extra_weight_attrs)
+
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        expert_tokens: torch.Tensor,
+        group_list_type: int,
+        pertoken_scale: torch.Tensor = None,
+        final_output_dtype: torch.dtype = torch.bfloat16
+    ):
+        hidden_size = x.size(-1)
+
+        if pertoken_scale is None:
+            x, pertoken_scale = torch_npu.npu_dynamic_quant(x)
+
+        if pertoken_scale.dim() > 1:
+            pertoken_scale = pertoken_scale.reshape(-1)
+            x = x.view(-1, hidden_size)
+
+        mm1_mm3 = torch_npu.npu_grouped_matmul(
+            [x], [layer.w13_weight], bias=[layer.w13_bias],
+            scale=[layer.w13_weight_scale], per_token_scale=[pertoken_scale],
+            group_list=expert_tokens, split_item=3,
+            output_dtype=final_output_dtype, group_type=0,
+            group_list_type=group_list_type,
+            act_type=0
+        )[0]
+
+        # fusion kernel: swiglu + clip + dynamic_quant
+        # To enhance quantization accuracy, a clip kernel has been introduced prior to the dynamic_quant kernel
+        intermediate_h, pertoken_scale = torch_npu.npu_swiglu_clip_quant(
+            mm1_mm3,
+            expert_tokens,
+            layer.w2_alpha,
+            activate_left=True,
+            quant_mode=1,
+            clamp_mode=1
+        )
+
+        out_hidden = torch_npu.npu_grouped_matmul(
+            [intermediate_h], [layer.w2_weight], bias=[layer.w2_bias],
+            scale=[layer.w2_weight_scale], per_token_scale=[pertoken_scale],
+            group_list=expert_tokens, split_item=3,
+            output_dtype=final_output_dtype, group_type=0,
+            group_list_type=group_list_type,
+            act_type=0
+        )[0]
+
+        return out_hidden
+
+    def process_weights_after_loading(
+        self, layer: torch.nn.Module,
+        is_transpose: bool = True,
+        is_nz: bool = True,
+        **kwargs,
+    ) -> None:
+        w13_weight = layer.w13_weight
+        w2_weight = layer.w2_weight
+        if is_transpose:
+            w13_weight.data = w13_weight.data.transpose(1, 2).contiguous()
+            w2_weight.data = w2_weight.data.transpose(1, 2).contiguous()
+        if is_nz:
+            w13_weight.data = torch_npu.npu_format_cast(w13_weight.data, 29)  # 29: format nz
+            w2_weight.data = torch_npu.npu_format_cast(w2_weight.data, 29)  # 29: format nz
+        w13_weight.data = w13_weight.data.view(torch.int32).contiguous()
+        w2_weight.data = w2_weight.data.view(torch.int32).contiguous()
+        layer.smooth_scale_1.data = layer.smooth_scale_1.data.to(torch.float)
+        layer.smooth_scale_2.data = layer.smooth_scale_2.data.to(torch.float)
+        layer.w13_weight_scale.data = layer.w13_weight_scale.data.unsqueeze(1)
+        layer.w2_weight_scale.data = layer.w2_weight_scale.data.unsqueeze(1)
+        layer.w13_weight = Parameter(w13_weight, requires_grad=False)
+        layer.w2_weight = Parameter(w2_weight, requires_grad=False)

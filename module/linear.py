@@ -802,7 +802,7 @@ class NpuLinear(nn.Module):
         return out
 
 
-class DynamicA8W8Linear(nn.Module):
+class DynamicW8A8Linear(nn.Module):
     def __init__(self, in_feature, out_feature, bias=False, offset=False, dtype=torch.bfloat16):
         super().__init__()
         self.in_feature, self.out_feature = in_feature, out_feature
@@ -839,7 +839,7 @@ class DynamicA8W8Linear(nn.Module):
             return x
 
 
-class DynamicA8W8MoeFFN(nn.Module):
+class DynamicW8A8MoeFFN(nn.Module):
     def __init__(self, hidden_size, intermediate_size, expert_num, dtype=torch.bfloat16):
         super().__init__()
         self.dtype = dtype

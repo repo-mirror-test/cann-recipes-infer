@@ -245,6 +245,14 @@ class FusedMoEGMM(torch.nn.Module):
                 raise ValueError(
                     f"quant method must be one of {WEIGHT_SCALE_SUPPORTED}")
             return
+        
+        if "bias" in weight_name or "alpha" in weight_name:
+            self._load_per_channel_weight_scale(
+                shard_id=shard_id,
+                shard_dim=shard_dim,
+                loaded_weight=loaded_weight,
+                expert_data=expert_data,
+                tp_rank=self.tp_rank)
 
         # Case weight_shape
         if "weight_shape" in weight_name:

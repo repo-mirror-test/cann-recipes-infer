@@ -22,7 +22,7 @@ import torch
 from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy, QuantizationType
 from module.quantization import QuantizationMethods, QuantizationConfig
 from module.quantization.compressed_tensors.compressed_tensors_moe_gmm import CompressedTensorsMoEGMMMethod
-from module.quantization.compressed_tensors.compressed_tensors_a8w8_int8 import CompressedTensorsW8A8Int8LinearMethod
+from module.quantization.compressed_tensors.compressed_tensors_w8a8_int8 import CompressedTensorsW8A8Int8LinearMethod
 from module.linear import LinearBase, LinearMethodBase, UnquantizedLinearMethod
 from module.fuse_moe_gmm import FusedMoEGMM
 from .utils import (find_matched_target, is_activation_quantization_format, should_ignore_layer)
@@ -197,6 +197,22 @@ class CompressedTensorsConfig(QuantizationConfig):
         is_static = not weight_quant.dynamic
 
         return is_channel_group and input_quant_none and is_symmetric and is_static
+    
+    def is_dynamic_token_w4a8(self,
+                               weight_quant: BaseModel,
+                               input_quant: BaseModel,) -> bool:
+        is_w4a8 = (weight_quant.num_bits == 4) and (input_quant.num_bits == 8)
+        weight_strategy = (
+            weight_quant.strategy == QuantizationStrategy.TENSOR.value
+            or weight_quant.strategy == QuantizationStrategy.CHANNEL.value
+            or weight_quant.strategy == QuantizationStrategy.GROUP.value)
+        is_token = (weight_strategy and input_quant.strategy
+                    == QuantizationStrategy.TOKEN.value)
+        is_dynamic = not weight_quant.dynamic and input_quant.dynamic
+
+        # Both symmetric and asymmetric input quantization supported.
+        # Only symmetric weight quantization supported.
+        return is_w4a8 and is_token and weight_quant.symmetric and is_dynamic
 
     def _get_scheme_from_parts(
             self,

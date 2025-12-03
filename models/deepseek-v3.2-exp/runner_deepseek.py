@@ -29,7 +29,10 @@ from executor.model_loader.default_loader import DefaultModelLoader
 from executor.model_loader.dummy_loader import DummyModelLoader
 from module.utils import to_transpose_nz
 from module.quantization import QuantizeMethodBase
-from module.quantization.compressed_tensors.compressed_tensors_moe_gmm import CompressedTensorW8A8Int8MoEGMMMethod
+from module.quantization.compressed_tensors.compressed_tensors_moe_gmm import (
+    CompressedTensorW8A8Int8MoEGMMMethod,
+    CompressedTensorW4A8Int8MoEGMMMethod
+)
 
 root_logger = logging.getLogger()
 root_logger.handlers.clear()
@@ -116,7 +119,8 @@ class DeepSeekRunner(ModelRunner):
             # Dynamic quant for input_avtivation of first grouped matmul requies complete smooth scale.
             # When applying expert parallel, each device only reserves smooth scales of mapping experts.
             # Need to do all gather to obtain complete smooth scale.
-            if isinstance(quant_method, CompressedTensorW8A8Int8MoEGMMMethod):
+            if isinstance(quant_method, CompressedTensorW8A8Int8MoEGMMMethod) or \
+                isinstance(quant_method, CompressedTensorW4A8Int8MoEGMMMethod):
                 moe_ep_size = self.runner_settings.get("parallel_config").get("moe_ep_size", 1)
                 if moe_ep_size > 1:
                     all_experts_smooth_scale = module.smooth_scale_1.data.new_empty(
