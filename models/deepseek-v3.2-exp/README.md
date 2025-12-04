@@ -134,4 +134,5 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
 
 ## 附录
 ### FAQ
-- **HCCL_BUFFSIZE不足问题**：如果报错日志中出现关键字"HCCL_BUFFSIZE is too SMALL, ..., NEEDED_HCCL_BUFFSIZE..., HCCL_BUFFSIZE=200MB, ..."，可通过配置环境变量 `export HCCL_BUFFSIZE=实际需要的大小` 解决，所有Rank上的该环境变量需保持一致。HCCL_BUFFSIZE参数介绍可[参考昇腾资料](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/maintenref/envvar/envref_07_0080.html)中的详细描述。
+- **HCCL_BUFFSIZE不足问题**：如果报错日志中出现关键字"HCCL_BUFFSIZE is too SMALL, ..., NEEDED_HCCL_BUFFSIZE..., HCCL_BUFFSIZE=200MB, ..."，可通过配置环境变量 `export HCCL_BUFFSIZE=实际需要的大小` 解决，所有Rank上的该环境变量需保持一致。HCCL_BUFFSIZE参数介绍可参考[昇腾资料](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/maintenref/envvar/envref_07_0080.html)中的详细描述。
+- **自定义算子导入失败**：如果报错日志中出现类似关键字"'_OpNamespace' 'custom' object has no attribute"，可参考[自定义算子指南](../../ops/ascendc/README.md)编译所需算子。

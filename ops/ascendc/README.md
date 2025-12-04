@@ -120,7 +120,7 @@
   ```
   Self-extractable archive "CANN-custom_ops-<cann_version>-linux.<arch>.run" successfully created.
   ```
-如果遇到版本校验拦截，可执行 bash build.sh --no-check-compitbale 命令跳过拦截，当前生成的自定义算子包："CANN-custom_ops-linux.<arch>.run"
+如果遇到版本校验拦截，可执行`bash build.sh --disable-check-compatible`命令跳过拦截，当前生成的自定义算子包：`CANN-custom_ops-linux.<arch>.run`
 
 编译成功后在 `output` 目录生成自定义算子包：`CANN-custom_ops-<cann_version>-linux.<arch>.run`。其中，\<cann_version>表示软件版本号，\<arch>表示操作系统架构。
 
@@ -158,3 +158,8 @@ examples用例运行命令如下：
   python3 test_npu_swiglu_clip_quant.py
   python3 test_npu_mla_prolog_v3.py
   ```
+
+## 附录
+### FAQ
+- **A2环境如何编译执行ascendc算子**：ascendc算子默认基于A3环境编译，包含Atlas A3 训练系列产品/Atlas A3 推理系列产品。其他环境需要在编译时通过`-c ${soc_version}`指定NPU型号，如Atlas A2 训练系列产品/Atlas 800I A2 推理产品/A200I A2 Box 异构组件使用`ascend910b`，编译命令为`bash build.sh -c ascend910b`。
+- **非标准镜像CANN包如何编译执行ascendc算子**：建议使用镜像版本，如果要使用不配套的cann包需要在算子编译时加上`--disable-check-compatible`配置项。
