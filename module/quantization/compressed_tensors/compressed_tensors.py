@@ -172,6 +172,9 @@ class CompressedTensorsConfig(QuantizationConfig):
     def is_dynamic_token_w8a8(self,
                                weight_quant: BaseModel,
                                input_quant: BaseModel,) -> bool:
+        # avoid a16 none input_quant that input_quant.num_bits will be error
+        if input_quant is None:
+            return False
         is_8_bits = weight_quant.num_bits == input_quant.num_bits == 8
         weight_strategy = (
             weight_quant.strategy == QuantizationStrategy.TENSOR.value

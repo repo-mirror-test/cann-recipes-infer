@@ -4,8 +4,6 @@ exe_mode: "ge_graph"                # ["ge_graph", "acl_graph", "eager"], mode o
 world_size: 128
 
 model_config:
-  mm_quant_mode: A8W8               # ["A16W16", "A8W8"]
-  gmm_quant_mode: A8W8              # ["A16W16", "A8W8"]
   next_n: 1
   enable_pa: True                   # [False, True]
   pa_block_size: 128

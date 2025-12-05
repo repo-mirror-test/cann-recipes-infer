@@ -55,6 +55,7 @@ from module.linear import (
     VocabParallelEmbedding
     )
 from module.fuse_moe_gmm import FusedMoEGMM
+from module.quantization.compressed_tensors.compressed_tensors import QUANT_MODE_W16A16, QUANT_MODE_W8A8
 from .configuration_deepseek import DeepseekV3Config
 from .modules import (_prepare_4d_causal_attention_mask, one_hot, yarn_get_mscale,
                       DeepseekV3RMSNorm, apply_rotary_pos_emb, _init_rope, DEEPSEEKV3_START_DOCSTRING,
@@ -69,21 +70,24 @@ class DeepseekV3DenseMLP(nn.Module):
     def __init__(self, config, runner_settings, prefix, **kwargs):
         super().__init__()
         self.runner_settings = runner_settings
-        self.mm_quant_mode = runner_settings.get("model_config").get("mm_quant_mode", "A16W16")
+        self.mm_quant_mode = (
+            config.quant_config.mm_quant_mode
+            if config.quant_config is not None
+            else QUANT_MODE_W16A16)
         self.moe_ep_size = self.runner_settings.get("parallel_config").get("moe_ep_size", 1)
         self.moe_tp_size = self.runner_settings.get("parallel_config").get("moe_tp_size", 1)
         self.dense_tp_size = self.runner_settings.get("parallel_config").get("dense_tp_size", 1)
         self.config = config
         self.hidden_size = config.hidden_size
         self.hccl_comm_dict = kwargs.get("hccl_comm_dict", None)
-        self.merge_up_gate_proj = MergedColumnParallelLinear(
+        self.gate_up_proj = MergedColumnParallelLinear(
             input_size=self.hidden_size,
             output_sizes=[config.intermediate_size] * 2,
             bias=False,
             tp_size=self.dense_tp_size,
             tp_rank=dist.get_rank(self.hccl_comm_dict["dense_tp_group"]) if self.dense_tp_size > 1 else 0,
             quant_config=config.quant_config,
-            prefix=f"{prefix}.merge_up_gate_proj"
+            prefix=f"{prefix}.gate_up_proj"
             )
         self.down_proj = RowParallelLinear(
             config.intermediate_size,
@@ -94,7 +98,7 @@ class DeepseekV3DenseMLP(nn.Module):
             quant_config=config.quant_config,
             prefix=f"{prefix}.down_proj")
 
-        if self.mm_quant_mode == "A8W8":
+        if self.mm_quant_mode == QUANT_MODE_W8A8:
             self.down_proj_forward = self.forward_a8w8
         else:
             self.down_proj_forward = self.forward_normal
@@ -120,14 +124,14 @@ class DeepseekV3DenseMLP(nn.Module):
         return down_proj
 
     def forward_normal(self, x):
-        merged_x = self.merge_up_gate_proj(x)
+        merged_x = self.gate_up_proj(x)
         intermediate_hidden_states = torch_npu.npu_swiglu(merged_x)
         return self.down_proj(intermediate_hidden_states)
 
     def forward_a8w8(self, x):
-        merged_x, pertoken_scale = self.merge_up_gate_proj(x, out_dtype=torch.int32)
+        merged_x, pertoken_scale = self.gate_up_proj(x, out_dtype=torch.int32)
         intermediate_hidden_states, pertoken_scale = torch_npu.npu_dequant_swiglu_quant(
-            merged_x, weight_scale=self.merge_up_gate_proj.weight_scale,
+            merged_x, weight_scale=self.gate_up_proj.weight_scale,
             quant_scale=self.down_proj.smooth_scales,
             quant_mode=1, activate_left=True,
             activation_scale=pertoken_scale
@@ -139,21 +143,24 @@ class DeepseekV3SharedExpert(nn.Module):
     def __init__(self, config, runner_settings, is_moe_layer=False, prefix="", **kwargs):
         super().__init__()
         self.runner_settings = runner_settings
-        self.mm_quant_mode = runner_settings.get("model_config").get("mm_quant_mode", "A16W16")
+        self.mm_quant_mode = (
+            config.quant_config.mm_quant_mode
+            if config.quant_config is not None
+            else QUANT_MODE_W16A16)
         self.moe_tp_size = self.runner_settings.get("parallel_config").get("moe_tp_size", 1)
         self.moe_ep_size = self.runner_settings.get("parallel_config").get("moe_ep_size", 1)
         self.config = config
         self.hidden_size = config.hidden_size
         self.is_moe_layer = is_moe_layer
         self.hccl_comm_dict = kwargs.get("hccl_comm_dict", None)
-        self.merge_up_gate_proj = MergedColumnParallelLinear(
+        self.gate_up_proj = MergedColumnParallelLinear(
             input_size=self.hidden_size,
             output_sizes=[config.moe_intermediate_size * config.n_shared_experts] * 2,
             bias=False,
             tp_size=self.moe_tp_size,
             tp_rank=dist.get_rank(self.hccl_comm_dict.get("moe_tp_group")) if self.moe_tp_size > 1 else 0,
             quant_config=config.quant_config,
-            prefix=f"{prefix}.merge_up_gate_proj")
+            prefix=f"{prefix}.gate_up_proj")
         self.down_proj = RowParallelLinear(
             config.moe_intermediate_size * config.n_shared_experts,
             config.hidden_size,
@@ -162,7 +169,7 @@ class DeepseekV3SharedExpert(nn.Module):
             tp_rank=dist.get_rank(self.hccl_comm_dict["moe_tp_group"]) if self.moe_tp_size > 1 else 0,
             quant_config=config.quant_config,
             prefix=f"{prefix}.down_proj")
-        if self.mm_quant_mode == "A8W8":
+        if self.mm_quant_mode == QUANT_MODE_W8A8:
             self.down_proj_forward = self.forward_a8w8
         else:
             self.down_proj_forward = self.forward_normal
@@ -173,14 +180,14 @@ class DeepseekV3SharedExpert(nn.Module):
         return down_proj
 
     def forward_normal(self, x):
-        merged_x = self.merge_up_gate_proj(x)
+        merged_x = self.gate_up_proj(x)
         intermediate_hidden_states = torch_npu.npu_swiglu(merged_x)
         return self.down_proj(intermediate_hidden_states)
 
     def forward_a8w8(self, x):
-        merged_x, pertoken_scale = self.merge_up_gate_proj(x, out_dtype=torch.int32)
+        merged_x, pertoken_scale = self.gate_up_proj(x, out_dtype=torch.int32)
         intermediate_hidden_states, pertoken_scale = torch_npu.npu_dequant_swiglu_quant(
-            merged_x, weight_scale=self.merge_up_gate_proj.weight_scale,
+            merged_x, weight_scale=self.gate_up_proj.weight_scale,
             quant_scale=self.down_proj.smooth_scales,
             quant_mode=1, activate_left=True,
             activation_scale=pertoken_scale
@@ -198,7 +205,10 @@ class DeepseekV3MoE(nn.Module):
         self.config = config
         self.layer_idx = kwargs.get("layer_idx")
         self.runner_settings = runner_settings
-        self.gmm_quant_mode = runner_settings.get("model_config").get("gmm_quant_mode", "A16W16")
+        self.gmm_quant_mode = (
+            config.quant_config.gmm_quant_mode
+            if config.quant_config is not None
+            else QUANT_MODE_W16A16)
         self.hidden_dim = config.hidden_size
         self.intermediate_size = config.moe_intermediate_size
         self.moe_tp_size = self.runner_settings.get("parallel_config").get("moe_tp_size", 1)
@@ -244,7 +254,10 @@ class DeepseekV3MoE(nn.Module):
             self.micro_batch_mode == MicroBatchMode.PREFILL_MICRO_BATCH_SP_TP_EP else\
             self.hccl_comm_dict.get("moe_ep_group", None)
         self.enable_geraph_and_multistream = False
-        self.mm_quant_mode = runner_settings.get("model_config").get("mm_quant_mode", "A16W16")
+        self.mm_quant_mode = (
+            config.quant_config.mm_quant_mode
+            if config.quant_config is not None
+            else QUANT_MODE_W16A16)
 
     def _init_gate(self, prefix):
         self.top_k = self.config.num_experts_per_tok
@@ -378,8 +391,8 @@ class DeepseekV3MoE(nn.Module):
                 "shared_expert_rank_num": self.shared_expert_rank_num,
                 "moe_expert_num": self.n_routed_experts,
                 "global_bs": 0,
-                "scales": self.experts.smooth_scale_1 if self.gmm_quant_mode == "A8W8" else None,
-                "quant_mode": 2 if self.gmm_quant_mode == "A8W8" else 0,
+                "scales": self.experts.smooth_scale_1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else None,
+                "quant_mode": 2 if self.gmm_quant_mode == QUANT_MODE_W8A8 else 0,
                 "group_ep": moe_ep_group_name,
                 "ep_world_size": self.moe_ep_size,
                 "ep_rank_id": global_rank // self.moe_tp_size,
@@ -422,13 +435,13 @@ class DeepseekV3MoE(nn.Module):
                 hidden_states_share = None
                 with npu_stream_switch(self.enable_geraph_and_multistream, "22"):
                     hidden_states = npu_wait_tensor(True, hidden_states, topk_idx)
-                    if self.mm_quant_mode == "A8W8":
-                        merged_x, pertoken_scale = self.shared_experts.merge_up_gate_proj(
+                    if self.mm_quant_mode == QUANT_MODE_W8A8:
+                        merged_x, pertoken_scale = self.shared_experts.gate_up_proj(
                             hidden_states.view(-1, hidden_states.shape[-1]),
                             out_dtype=torch.int32
                         )
                     else:
-                        merged_x = self.shared_experts.merge_up_gate_proj(
+                        merged_x = self.shared_experts.gate_up_proj(
                             hidden_states.view(-1, hidden_states.shape[-1])
                         )
             else:
@@ -468,11 +481,11 @@ class DeepseekV3MoE(nn.Module):
             hidden_states,
             expert_idx=topk_idx,
             active_num=topk_idx.shape[0] * topk_idx.shape[1],
-            scale=self.experts.smooth_scale_1 if self.gmm_quant_mode == "A8W8" else None,
+            scale=self.experts.smooth_scale_1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else None,
             expert_num=self.num_experts,
             expert_tokens_num_type=1,  # 0: cumsum mode(not supported now); 1: count mode
             expert_tokens_num_flag=True, active_expert_range=[0, self.num_experts],
-            quant_mode=1 if self.gmm_quant_mode == "A8W8" else -1
+            quant_mode=1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else -1
             # -1: non-quant; 1: dynamic quant; 0: static quant(not supported now)
         )
         return expanded_x, expanded_row_idx, tokens_per_expert, pertoken_scale, topk_weight
@@ -497,7 +510,7 @@ class DeepseekV3MoE(nn.Module):
             "group_list_type": 1,
         }
 
-        if self.gmm_quant_mode == "A8W8":
+        if self.gmm_quant_mode == QUANT_MODE_W8A8:
             gmm_args.update({"pertoken_scale": gathered_pertoken_scale})
         hidden_states_ordered_by_experts = self.experts(**gmm_args)
         # finalize-rerouting
@@ -528,7 +541,7 @@ class DeepseekV3MoE(nn.Module):
             intermediate_hidden_states = npu_wait_tensor(
                 True, intermediate_hidden_states, hidden_states_ordered_by_experts
             )
-            if self.mm_quant_mode == "A8W8":
+            if self.mm_quant_mode == QUANT_MODE_W8A8:
                 hidden_states_share = self.shared_experts.down_proj(intermediate_hidden_states, pertoken_scale)
             else:
                 hidden_states_share = self.shared_experts.down_proj(intermediate_hidden_states)
@@ -547,7 +560,7 @@ class DeepseekV3MoE(nn.Module):
             "active_expert_range": [0, self.num_experts],
             "quant_mode": -1
         }
-        if self.gmm_quant_mode == "A8W8":
+        if self.gmm_quant_mode == QUANT_MODE_W8A8:
             routing_args.update({
                 "scale": self.experts.smooth_scale_1,
                 "expert_tokens_num_type": 2,
@@ -562,7 +575,7 @@ class DeepseekV3MoE(nn.Module):
         )
 
         moe_args = {"group_list_type": 1}
-        if self.gmm_quant_mode == "A8W8":
+        if self.gmm_quant_mode == QUANT_MODE_W8A8:
             moe_args.update({
                 "group_list_type": 2,
                 "pertoken_scale": dynamic_scale
@@ -570,9 +583,9 @@ class DeepseekV3MoE(nn.Module):
         if self.enable_geraph_and_multistream:
             with npu_stream_switch(self.enable_geraph_and_multistream, "22"):
                 merged_x = npu_wait_tensor(True, merged_x, expanded_x)
-                if self.mm_quant_mode == "A8W8":
+                if self.mm_quant_mode == QUANT_MODE_W8A8:
                     intermediate_hidden_states, pertoken_scale = torch_npu.npu_dequant_swiglu_quant(
-                        merged_x, weight_scale=self.shared_experts.merge_up_gate_proj.weight_scale,
+                        merged_x, weight_scale=self.shared_experts.gate_up_proj.weight_scale,
                         quant_scale=self.shared_experts.down_proj.smooth_scales,
                         quant_mode=1, activate_left=True,
                         activation_scale=pertoken_scale
@@ -625,7 +638,7 @@ class DeepseekV3MoE(nn.Module):
 
         gathered_pertoken_scale = None if pertoken_scale is None else\
                             pertoken_scale.new_empty(gathered_tokens.shape[0])
-        if self.gmm_quant_mode == "A8W8":
+        if self.gmm_quant_mode == QUANT_MODE_W8A8:
             dist.all_to_all_single(gathered_pertoken_scale,\
                                    pertoken_scale, output_splits, input_splits, group=self.moe_ep_group)
         return tokens_per_expert_group, gathered_tokens, gathered_pertoken_scale, input_splits, output_splits
@@ -644,11 +657,11 @@ class DeepseekV3MoE(nn.Module):
                 hidden_states,
                 expert_idx=topk_ids,
                 active_num=topk_ids.shape[0] * topk_ids.shape[1],
-                scale=self.experts.smooth_scale_1 if self.gmm_quant_mode == "A8W8" else None,
+                scale=self.experts.smooth_scale_1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else None,
                 expert_num=self.num_experts,
                 expert_tokens_num_type=1,  # 0: cumsum mode(not supported now); 1: count mode
                 expert_tokens_num_flag=True, active_expert_range=[0, self.num_experts],
-                quant_mode=1 if self.gmm_quant_mode == "A8W8" else -1
+                quant_mode=1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else -1
                 # -1: non-quant; 1: dynamic quant; 0: static quant(not supported now)
             )
 
@@ -694,9 +707,9 @@ class DeepseekV3MoE(nn.Module):
         if self.enable_geraph_and_multistream:
             with npu_stream_switch(self.enable_geraph_and_multistream, "22"):
                 merged_x = npu_wait_tensor(True, merged_x, expand_x)
-                if self.mm_quant_mode == "A8W8":
+                if self.mm_quant_mode == QUANT_MODE_W8A8:
                     intermediate_hidden_states, pertoken_scale = torch_npu.npu_dequant_swiglu_quant(
-                        merged_x, weight_scale=self.shared_experts.merge_up_gate_proj.weight_scale,
+                        merged_x, weight_scale=self.shared_experts.gate_up_proj.weight_scale,
                         quant_scale=self.shared_experts.down_proj.smooth_scales,
                         quant_mode=1, activate_left=True,
                         activation_scale=pertoken_scale
@@ -711,7 +724,7 @@ class DeepseekV3MoE(nn.Module):
             "group_list_type": 1,
         }
 
-        if self.gmm_quant_mode == "A8W8":
+        if self.gmm_quant_mode == QUANT_MODE_W8A8:
             gmm_args.update({"pertoken_scale": dynamic_scale})
 
         hidden_states_ordered_by_experts = self.experts(**gmm_args)
@@ -767,7 +780,10 @@ class DeepseekV3Attention(nn.Module):
         super().__init__()
         self.config = config
         self.runner_settings = runner_settings
-        self.mm_quant_mode = runner_settings.get("model_config").get("mm_quant_mode", "A16W16")
+        self.mm_quant_mode = (
+            config.quant_config.mm_quant_mode
+            if config.quant_config is not None
+            else QUANT_MODE_W16A16)
         self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
         self.batch_size = self.runner_settings.get("data_config").get("batch_size", 16)
         self.batch_size_per_rank = self.runner_settings.get("data_config").get("batch_size_per_rank", 1)
@@ -840,7 +856,7 @@ class DeepseekV3Attention(nn.Module):
             self.kv_lora_rank,
             self.num_heads * (self.qk_nope_head_dim + self.v_head_dim),
             bias=False,
-            quant_config=None,
+            quant_config=config.quant_config,
             tp_size=self.attn_tp_size,
             tp_rank=dist.get_rank(self.hccl_comm_dict["attn_tp_group"]) if self.attn_tp_size > 1 else 0,
             prefix=f"{prefix}.kv_b_proj")
@@ -1313,7 +1329,7 @@ class DeepseekV3Attention(nn.Module):
         rope_cache = past_key_value[self.layer_idx][1].unsqueeze(2)
         block_num, block_size, key_head_num, cache_dim = nope_cache.size()
 
-        enable_mm_quant_a8w8 = self.mm_quant_mode == "A8W8"
+        enable_mm_quant_a8w8 = self.mm_quant_mode == QUANT_MODE_W8A8
         if enable_mm_quant_a8w8:
             hidden_states_int8, pertoken_scale = torch_npu.npu_dynamic_quant(hidden_states.flatten(0, 1))
             hidden_states_int8 = hidden_states_int8.view(bsz, q_len, -1)
@@ -2215,7 +2231,9 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             output_size=config.vocab_size,
             bias=False,
             tp_size=self.lmhead_tp_size,
-            tp_rank=dist.get_rank(self.hccl_comm_dict.get("lmhead_tp_group")) if self.lmhead_tp_size > 1 else 0
+            tp_rank=dist.get_rank(self.hccl_comm_dict.get("lmhead_tp_group")) if self.lmhead_tp_size > 1 else 0,
+            quant_config=None,
+            prefix="lm_head"
             )
 
         # Initialize weights and apply final processing
@@ -2639,8 +2657,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]) -> Set[str]:
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
-            ("merge_up_gate_proj", "gate_proj", 0),
-            ("merge_up_gate_proj", "up_proj", 1),
+            ("gate_up_proj", "gate_proj", 0),
+            ("gate_up_proj", "up_proj", 1),
         ]
 
         repeat_loaded_weights_mapping = [] # (origin_name: repeat_loaded_name)
@@ -2942,8 +2960,8 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
     def _load_weight_map(self):
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
-            ("merge_up_gate_proj", "gate_proj", 0),
-            ("merge_up_gate_proj", "up_proj", 1),
+            ("gate_up_proj", "gate_proj", 0),
+            ("gate_up_proj", "up_proj", 1),
         ]
 
         mtp_unique_weight_mapping = [

@@ -8,8 +8,6 @@ Basic Config
   world_size: 16                                     # The world size. Int type
 
 Model Config
-  mm_quant_mode: A8W8           # Linear operation quant mode. currently only support ["A16W16", "A8W8"]
-  gmm_quant_mode: A8W8            # GMM operation quant mode. currently only support ["A16W16", "A8W8"]
   next_n: 1                       # Number of steps using multi-token prediction. Support [0, 1]
   enable_pa: False                # Whether use PageAttention. Support [False, True]
   pa_block_size: 128              # PA Block Size value. Support [128, 256] 

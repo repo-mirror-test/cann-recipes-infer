@@ -84,7 +84,7 @@ class DeepSeekRunner(ModelRunner):
         self.to_device()
         # map for scales need to cast to float when apply w8a8 quant method
         float_scales_map = [
-            "merge_up_gate_proj",
+            "gate_up_proj",
             "q_b_proj",
             "wq_b",
         ]

@@ -262,7 +262,7 @@ class DeepseekV3MoE(nn.Module):
         self.gate = ReplicatedLinear(self.config.hidden_size,
                                      self.n_routed_experts,
                                      bias=False,
-                                     quant_config=self.config.quant_config,
+                                     quant_config=None,
                                      params_dtype=torch.float32,
                                      prefix=f"{prefix}.gate")
         self._reset_parameters()
@@ -1737,7 +1737,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                 bias=False,
                 tp_size=self.lmhead_tp_size,
                 tp_rank=dist.get_rank(self.hccl_comm_dict.get("lmhead_tp_group")) if self.lmhead_tp_size > 1 else 0,
-                quant_config=config.quant_config,
+                quant_config=None,
                 prefix="lm_head"
                 )
         else:
@@ -2404,7 +2404,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
             2 * config.hidden_size,
             config.hidden_size,
             bias=False,
-            quant_config=config.quant_config,
+            quant_config=None,
             prefix=f"model.layers.{self.mtp_start_layer_idx}.eh_proj")
 
     @add_start_docstrings_to_model_forward(DEEPSEEKV3_INPUTS_DOCSTRING)
