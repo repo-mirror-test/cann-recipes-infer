@@ -33,9 +33,10 @@ class InferMTP(nn.Module):
         self.main_model = main_model
         self.mtp_model = mtp_model
 
+
     def model_generate_mtp(self, prompts, warm_up=False):
         # init input_dict and count
-        input_dict_main, input_dict_mtp, inputs, input_lens = self.get_mtp_inputs(prompts)
+        input_dict_main, input_dict_mtp, inputs, input_lens = self.get_inputs(prompts)
         batch_size, _ = inputs.input_ids.shape
         cnt = 0
         infer_time_rec = []
@@ -72,7 +73,8 @@ class InferMTP(nn.Module):
                 total_accepted_num = total_accepted_num + accepted_num
 
                 # mtp model
-                for _ in range(self.next_n):
+                for next_index in range(self.next_n):
+
                     model_inputs = self.mtp_model.model_input_prepare(input_dict_mtp)
                     outputs = self.mtp_model.model_inference(model_inputs,
                                                             is_prefill=input_dict_mtp['is_prefill'], warm_up=warm_up)
@@ -80,8 +82,14 @@ class InferMTP(nn.Module):
                     logits, infer_time_spec, prev_hidden_states = outputs
 
                     # mtp model output process
-                    input_dict_mtp = self.mtp_model_output_process(model_inputs, input_dict_mtp,
-                                                                    logits, prev_hidden_states)
+                    if next_index < self.next_n - 1:
+                        past_key_values_cur = (model_inputs['past_key_values'][next_index],)
+                        input_dict_mtp = self.mtp_model_output_process_continue(input_dict_mtp,
+                                                                                logits, prev_hidden_states,
+                                                                                past_key_values_cur)
+                    else:
+                        input_dict_mtp = self.mtp_model_output_process(model_inputs, input_dict_mtp,
+                                                                       logits, prev_hidden_states)
                     step_time += infer_time_spec
 
                 # update inputs for main model to verify in the next round
@@ -102,7 +110,8 @@ class InferMTP(nn.Module):
         res_list = detokenize_outputs(generate_ids_list, self.main_model.tokenizer, input_lens)
         return res_list
 
-    def get_mtp_inputs(self, prompts):
+
+    def get_inputs(self, prompts):
         inputs = self.main_model.tokenize_prompts(prompts)
         # 2048: fixed shape of mask, used in PFA
         share_mask_tril_main = get_init_attn_mask(2048, self.main_model.device)
@@ -211,10 +220,34 @@ class InferMTP(nn.Module):
             cur_accepted_hidden = main_hidden[j, :cur_len, :].unsqueeze(0) # B,S,H
             mtp_prev_hid = torch.cat([last_step_hidden[j], cur_accepted_hidden], dim=1)[:, -self.spec_len:, :]
             mtp_prev_hid_tmp.append(mtp_prev_hid)
-            input_dict_main['prev_hidden_states'].append(cur_accepted_hidden)
+            input_dict_main['prev_hidden_states'].append(mtp_prev_hid)
         input_dict_mtp['prev_hidden_states'] = torch.cat(mtp_prev_hid_tmp, dim=0)
 
         return input_dict_main, input_dict_mtp
+
+    # post process for mtp model output when continue inference(next_index < next_n - 1)
+    def mtp_model_output_process_continue(self, input_dict, outputs, prev_hidden_states, 
+                                      past_key_values_cur):
+
+        next_tokens = torch.argmax(outputs, dim=-1)
+        batch_size = next_tokens.shape[0]
+        spec_token = next_tokens[:, -1:]
+
+        # keep record of spec tokens for main model verification
+        if input_dict['spec_tokens'] is None:
+            input_dict['spec_tokens'] = spec_token
+        else:
+            input_dict['spec_tokens'] = torch.cat([input_dict['spec_tokens'], spec_token], dim=-1)
+
+        input_dict["past_key_values"] = past_key_values_cur
+
+        prev_hidden_states = prev_hidden_states.view(batch_size, -1, prev_hidden_states.shape[-1]) # (B, S, H)
+
+        input_dict['prev_hidden_states'] = torch.cat([input_dict['prev_hidden_states'], 
+                    prev_hidden_states[:, -1:, :]], dim=1)[:, -prev_hidden_states.shape[1]:, :]
+        input_dict['input_ids'] = torch.cat([input_dict['input_ids'], spec_token], dim=-1)[:, 1:]
+
+        return input_dict
 
 
     def mtp_model_output_process(self, model_inputs, input_dict, outputs, prev_hidden_states):

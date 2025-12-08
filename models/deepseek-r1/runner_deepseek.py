@@ -264,7 +264,11 @@ class DeepSeekRunner(ModelRunner):
         share_mask_tril = input_dict.get("share_mask_tril")
         prev_hidden_states = input_dict.get("prev_hidden_states")
         if past_key_values is None:
-            self.past_key_values = self.model.init_cache(input_ids)
+            if self.is_mtp:
+                # Draft model has only 1 layer but is invoked next_n times, requiring next_n layer of KV cache.
+                self.past_key_values = self.model.init_cache(input_ids, num_hidden_layers=self.model.next_n)
+            else:
+                self.past_key_values = self.model.init_cache(input_ids)
             input_dict["past_key_values"] = self.past_key_values
         model_inputs = self.model.prepare_inputs_for_generation(
             input_ids=input_ids,

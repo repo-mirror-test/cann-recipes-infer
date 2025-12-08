@@ -8,7 +8,7 @@ Basic Config
   world_size: 16                                     # The world size. Int type
 
 Model Config
-  next_n: 1                       # Number of steps using multi-token prediction. Support [0, 1]
+  next_n: 1                       # Number of steps using multi-token prediction. Support [0, 1, 2, 3]
   enable_pa: False                # Whether use PageAttention. Support [False, True]
   pa_block_size: 128              # PA Block Size value. Support [128, 256] 
   enable_weight_nz: True          # Whether use nz-weight format for better performance. Support [False, True]

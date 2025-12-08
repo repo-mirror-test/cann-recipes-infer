@@ -51,8 +51,8 @@ def check_model_settings(world_size, runner_settings):
         raise ValueError(f"{exe_mode=} does not support cache compile, aclgraph, multi_streams or superkernel!")
     if enable_aclgraph and enable_superkernel:
         raise ValueError(f"aclgraph dose not support superkernel!")
-    if next_n > 1:
-        raise ValueError(f"{next_n=}, currently only support 0 or 1")
+    if next_n > 3:
+        raise ValueError(f"{next_n=}, currently only support 0, 1, 2, 3")
     try:
         micro_batch_mode = MicroBatchMode(micro_batch_mode)
     except Exception as e:

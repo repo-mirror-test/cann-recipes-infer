@@ -2456,7 +2456,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
 
     def init_cache(
         self,
-        input_ids
+        input_ids,
+        num_hidden_layers: Optional[int] = None, 
     ):
         batch_size, seq_len = input_ids.size()
         cache_seq_len = self.max_position_embeddings
@@ -2464,8 +2465,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         dtype_rope = self.config.torch_dtype
 
         past_key_values = ()
+        num_hidden_layers = len(self.model.layers) if num_hidden_layers is None else num_hidden_layers
 
-        num_hidden_layers = len(self.model.layers)
         if self.enable_pa:
             cache_nope_shape = (
                             self.kv_cache_num_block,
