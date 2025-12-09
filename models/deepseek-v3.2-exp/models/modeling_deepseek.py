@@ -812,6 +812,9 @@ class DeepseekIndexerAttention(nn.Module):
         self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
         if self.kv_cache_c8:
             self.ckv_a_alpha = torch.nn.Parameter(torch.ones(1, dtype=torch.float), requires_grad=False)
+            # empty tensor input for kr_cache
+            # Its shape can be specified arbitrarily, but one of its dimensions must be 0
+            self.fake_kr_cache = torch.empty((1, 2, 1, 0), dtype=torch.int8, device="npu")
 
         self.enable_offload = self.runner_settings.get("model_config").get("enable_offload", False)
         self.index_topk = self.config.index_topk
@@ -1077,9 +1080,13 @@ class DeepseekIndexerAttention(nn.Module):
             "query_norm_flag": True,
             "weight_quant_mode": weight_quant_mode
         }
+
+        # When kv_cache_c8 is enabled, nope_cache, rope_cache, and scales
+        # are concatenated and passed via the k_nope input.
+        # In this case, an empty tensor must be passed for the k_rope input.
         if self.kv_cache_c8:
             mla_prolog_input_args.update({
-                "kr_cache": hidden_states.unsqueeze(0),
+                "kr_cache": self.fake_kr_cache,
                 "kv_cache_quant_mode": 3,
                 "query_quant_mode": 0,
                 "ckvkr_repo_mode": 1,
@@ -1087,7 +1094,7 @@ class DeepseekIndexerAttention(nn.Module):
                 "tile_size": 128,
                 "k_nope_clip_alpha": self.ckv_a_alpha
             })
-            
+
         q_nope, q_pe, dequant_scale_q_nope, qr, dequant_q_norm = torch.ops.custom.npu_mla_prolog_v3(
             **mla_prolog_input_args
         )
@@ -1176,7 +1183,7 @@ class DeepseekIndexerAttention(nn.Module):
         }
         if self.kv_cache_c8:
             mla_prolog_input_args.update({
-                "kr_cache": hidden_states.unsqueeze(0),
+                "kr_cache": self.fake_kr_cache,
                 "kv_cache_quant_mode": 3,
                 "query_quant_mode": 0,
                 "ckvkr_repo_mode": 1,

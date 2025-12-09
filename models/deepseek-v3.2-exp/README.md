@@ -79,11 +79,19 @@ DeepSeek团队发布了最新的模型DeepSeek-V3.2-Exp，在各项指标上都�
 ### 转换权重
 
   在各个节点上使用`weight_convert.sh` 脚本完成FP8到Bfloat16/Int8权重转换。
-  
+
   >入参介绍：`input_fp8_hf_path`：原始fp8权重路径；`output_hf_path`：转换后输出的权重路径；`quant_mode`：量化模式
 
+如果权重转换的运行环境为NPU，需要先执行：
+
+```shell
+cann_path=/usr/local/Ascend/ascend-toolkit/latest  # cann包安装路径
+source ${cann_path}/bin/setenv.bash
+```
+
   权重转换拉起示例：
-  ```
+
+  ```shell
   # 转换为Bfloat16权重
   bash utils/weight_convert.sh --input_fp8_hf_path /data/models/DeepSeek-V3.2-Exp-FP8 --output_hf_path /data/models/DeepSeek-V3.2-Exp-Bfloat16 --quant_mode bfloat16
 
