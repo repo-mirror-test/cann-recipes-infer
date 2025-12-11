@@ -4,7 +4,7 @@
 # This file is a part of the CANN Open Software.
 # Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, 
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
@@ -43,7 +43,7 @@ class OffloadCache(nn.Module):
         for _ in range(self.num_hidden_layers):
             size = (self.batch_size_per_rank, 1 + self.next_n, 1, self.index_topk + 1) # bsnd
             self.selection_kv_block_status += (torch.full(size, -1).to(device="npu", dtype=torch.int32),)
-        
+
         self.d2h_stream = torch.npu.Stream(device="npu")
         self.d2h_event = torch.npu.Event(blocking=True, enable_timing=False)
 
@@ -59,26 +59,27 @@ class OffloadCache(nn.Module):
 
         self.default_topk_indices = torch.arange(self.index_topk, dtype=torch.int32, device="npu")\
                                     .view(1, -1).repeat(batchseq, 1)
-        
-        self.kv_cache_c8 = self.config.quant_config.kv_cache_c8 if self.config.quant_config is not None else False
+
+        self.kv_cache_quant_mode = self.config.quant_config.kv_cache_quant_mode \
+            if self.config.quant_config is not None else "unquant"
         self.empty_rope = torch.tensor([], dtype=torch.int8, device="npu")
 
     def init_cache(
         self,
         cache_device,
     ):
-        dtype = torch.int8 if self.kv_cache_c8 else self.config.torch_dtype
+        dtype = torch.int8 if self.kv_cache_quant_mode == "int8" else self.config.torch_dtype
 
         past_key_values = ()
         self.temp_kv_cache = None
-        self.selected_key_values = () 
+        self.selected_key_values = ()
         self.past_key_values_unmapped = ()
 
-        # When the kvcache INT8 quantization is enabled 
+        # When the kvcache INT8 quantization is enabled
         # nope_cache, rope_cache, and nope_scale need to be concatenated for SFA/MLAprolog kernel in INT8 dtype.
         # kv_lora_rank(INT8) + qk_rope_head_dim(BF16) * 2(->INT8) + kv_scale(FP32) * 4(->INT8)
         cache_last_dim = self.config.kv_lora_rank + self.config.qk_rope_head_dim * 2 + 4 * 4 \
-            if self.kv_cache_c8 else self.config.kv_lora_rank
+            if self.kv_cache_quant_mode == "int8" else self.config.kv_lora_rank
 
         cache_nope_shape = (
                         self.kv_cache_num_block,
@@ -93,7 +94,7 @@ class OffloadCache(nn.Module):
                         1,
                         self.config.qk_rope_head_dim
                     )
-        
+
         # temp cache for prefill
         temp_nope = torch.zeros((
                     self.batch_len,
@@ -101,7 +102,7 @@ class OffloadCache(nn.Module):
                     1,
                     cache_last_dim
                 ), dtype=dtype, device=cache_device)
-        if self.kv_cache_c8:
+        if self.kv_cache_quant_mode == "int8":
             temp_rope = torch.tensor([], dtype=torch.int8, device=cache_device)
         else:
             temp_rope = torch.zeros((
@@ -114,7 +115,7 @@ class OffloadCache(nn.Module):
 
         for _ in range(self.num_hidden_layers):
             cache_nope = torch_npu.empty_with_swapped_memory(cache_nope_shape, dtype=dtype, device=cache_device)
-            if self.kv_cache_c8:
+            if self.kv_cache_quant_mode == "int8":
                 cache_rope = None
             else:
                 cache_rope = torch_npu.empty_with_swapped_memory(cache_rope_shape, dtype=dtype, device=cache_device)
@@ -122,7 +123,7 @@ class OffloadCache(nn.Module):
 
             selected_nope = torch.zeros((self.selection_num_blocks, self.block_size, cache_last_dim),
                                         dtype=dtype, device=cache_device)
-            if self.kv_cache_c8:
+            if self.kv_cache_quant_mode == "int8":
                 selected_rope = torch.tensor([], dtype=torch.int8, device=cache_device)
             else:
                 selected_rope = torch.zeros((self.selection_num_blocks, self.block_size, self.config.qk_rope_head_dim),
@@ -130,7 +131,7 @@ class OffloadCache(nn.Module):
             self.selected_key_values += ((selected_nope, selected_rope),)
 
         return past_key_values
-    
+
     def reinit_status(self):
         for i in range(self.num_hidden_layers):
             status = self.selection_kv_block_status[i]

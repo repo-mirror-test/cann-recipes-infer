@@ -57,7 +57,7 @@ class Indexer(nn.Module):
         super().__init__()
         self.layer_idx = layer_idx
         if layer_idx == config.num_hidden_layers: # mtp model
-            self.layer_idx = 0 # mtp model only has one layer of cache 
+            self.layer_idx = 0 # mtp model only has one layer of cache
         self.runner_settings = runner_settings
         self.hccl_comm_dict = kwargs.get("hccl_comm_dict", None)
 
@@ -76,7 +76,8 @@ class Indexer(nn.Module):
         self.rope_head_dim: int = config.qk_rope_head_dim
         self.index_topk: int = config.index_topk
         self.q_lora_rank: int = config.q_lora_rank
-        self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
+        self.kv_cache_quant_mode = config.quant_config.kv_cache_quant_mode \
+            if config.quant_config is not None else "unquant"
 
         self.wq_b = ReplicatedLinear(self.q_lora_rank,
                                      self.n_heads * self.head_dim,
@@ -141,7 +142,7 @@ class Indexer(nn.Module):
         }
 
         # indexer_prolog_pypto fusion ops only enabled under W8A8C8 scenario in decode stage
-        enable_indexer_prolog_pypto = self.enable_pypto and self.kv_cache_c8
+        enable_indexer_prolog_pypto = self.enable_pypto and self.kv_cache_quant_mode == "int8"
         if is_prefill or not enable_indexer_prolog_pypto:
             forward_func = self.prefill_decode_ascendc
         else:
@@ -273,17 +274,17 @@ class Indexer(nn.Module):
         key_dequant_scale = None
         indexer_input = {}
 
-        if self.kv_cache_c8:
+        if self.kv_cache_quant_mode == "int8":
             with npu_stream_switch(enable_multi_streams, "22"):
                 # q quant
                 q = self.apply_hadamard(q)
                 q, query_dequant_scale = torch_npu.npu_dynamic_quant(q)
                 query_dequant_scale = query_dequant_scale.type(torch.float16)
-            # k quant 
+            # k quant
             k = self.apply_hadamard(k)
             k, key_dequant_scale = torch_npu.npu_dynamic_quant(k)
             key_dequant_scale = key_dequant_scale.type(torch.float16)
-            
+
             if self.cp_size > 1 and is_prefill:
                 k_scale_all = key_dequant_scale.new_empty([bsz * seqlen * self.cp_size, key_dequant_scale.shape[-1]])
                 dist.all_gather_into_tensor(k_scale_all, key_dequant_scale.view(bsz * seqlen, -1), \
@@ -294,7 +295,7 @@ class Indexer(nn.Module):
                 query_dequant_scale_prev, query_dequant_scale_next = torch.split(query_dequant_scale, \
                 query_dequant_scale.size(1) // 2, dim=1)
                 query_dequant_scale_prev = query_dequant_scale_prev.reshape(-1, self.n_heads)
-                query_dequant_scale_next = query_dequant_scale_next.reshape(-1, self.n_heads) 
+                query_dequant_scale_next = query_dequant_scale_next.reshape(-1, self.n_heads)
                 c8_input_dict.update({
                                     "query_dequant_scale_prev": query_dequant_scale_prev,
                                     "query_dequant_scale_next": query_dequant_scale_next,
@@ -322,7 +323,7 @@ class Indexer(nn.Module):
                                                 slot_mapping.view(-1, 1),
                                                 k.view(-1, k.shape[-1]))
         if is_prefill:
-            # input format is [B, S, N, D] with seq pad to input_max_len, attention calc use the seq_len after pad. 
+            # input format is [B, S, N, D] with seq pad to input_max_len, attention calc use the seq_len after pad.
             # note: tnd layerout, actual_seq_lengths_q use cumsum indices
             seq_qlen_with_pad = torch.tensor([seqlen for _ in range(bsz)], dtype=kv_len.dtype, device=kv_len.device)
             actual_seq_lengths_kv = seq_qlen_with_pad
@@ -349,22 +350,22 @@ class Indexer(nn.Module):
                 })
             indexer_input.update({"actual_seq_lengths_kv": cp_input_dict["kv_len_prev"],
                                     "actual_seq_lengths_query": cp_input_dict["actual_seq_q"]})
-            if self.kv_cache_c8:
-                indexer_input.update({"query_dequant_scale": c8_input_dict["query_dequant_scale_prev"]}) 
+            if self.kv_cache_quant_mode == "int8":
+                indexer_input.update({"query_dequant_scale": c8_input_dict["query_dequant_scale_prev"]})
             topk_indices_prev = indexer_func(**indexer_input)
             indexer_input.update({
                 "q": q_next.view(bsz, -1, self.n_heads, q.shape[-1]),
                 "weights": weights_next,
                 })
             indexer_input.update({"actual_seq_lengths_kv": cp_input_dict["kv_len_next"]})
-            if self.kv_cache_c8:
+            if self.kv_cache_quant_mode == "int8":
                 indexer_input.update({"query_dequant_scale": c8_input_dict["query_dequant_scale_next"]})
             topk_indices_next = indexer_func(**indexer_input)
             return (topk_indices_prev, topk_indices_next)
         else:
             indexer_input.update({"q": q, "weights": weights})
             return indexer_func(**indexer_input)
-    
+
     def li_fusion(
         self,
         q: torch.Tensor,
@@ -376,7 +377,7 @@ class Indexer(nn.Module):
         is_prefill: bool = True,
         **kwargs
     ):
-        use_pto = self.enable_pypto and not is_prefill and not self.kv_cache_c8
+        use_pto = self.enable_pypto and not is_prefill and not self.kv_cache_quant_mode == "int8"
         if not use_pto:
             q = q.view(-1, self.n_heads, self.head_dim)
             layout_query = 'TND'
@@ -396,7 +397,7 @@ class Indexer(nn.Module):
             "weights": weights,
             "layout_query": layout_query,
         }
-        if self.kv_cache_c8:
+        if self.kv_cache_quant_mode == "int8":
             key_dequant_scale = kwargs.get("key_dequant_scale", None)
             query_dequant_scale = kwargs.get("query_dequant_scale", None)
             li_input_kwargs.update({

@@ -57,7 +57,6 @@ from module.linear import (
     VocabParallelEmbedding
     )
 from module.fuse_moe_gmm import FusedMoEGMM
-from module.quantization.compressed_tensors.compressed_tensors import QUANT_MODE_W8A8, QUANT_MODE_W16A16
 from .configuration_deepseek import DeepseekV3Config
 from .modules import (_prepare_4d_causal_attention_mask, one_hot, yarn_get_mscale,
                       DeepseekV3RMSNorm, apply_rotary_pos_emb, _init_rope, DEEPSEEKV3_START_DOCSTRING,
@@ -76,7 +75,7 @@ class DeepseekV3DenseMLP(nn.Module):
         self.mm_quant_mode = (
             config.quant_config.mm_quant_mode
             if config.quant_config is not None
-            else QUANT_MODE_W16A16)
+            else "w16a16")
         self.moe_ep_size = self.runner_settings.get("parallel_config").get("moe_ep_size", 1)
         self.moe_tp_size = self.runner_settings.get("parallel_config").get("moe_tp_size", 1)
         self.dense_tp_size = self.runner_settings.get("parallel_config").get("dense_tp_size", 1)
@@ -110,8 +109,8 @@ class DeepseekV3DenseMLP(nn.Module):
             dist.all_gather_into_tensor(x_output, x, group=self.hccl_comm_dict.get("dense_tp_group", None))
             x = x_output
 
-        if self.mm_quant_mode == QUANT_MODE_W8A8:
-            down_proj = self.forward_a8w8(x)
+        if self.mm_quant_mode == "w8a8":
+            down_proj = self.forward_w8a8(x)
         else:
             down_proj = self.forward_normal(x)
 
@@ -129,7 +128,7 @@ class DeepseekV3DenseMLP(nn.Module):
         intermediate_hidden_states = torch_npu.npu_swiglu(merged_x)
         return self.down_proj(intermediate_hidden_states)
 
-    def forward_a8w8(self, x):
+    def forward_w8a8(self, x):
         merged_x, pertoken_scale = self.gate_up_proj(x, out_dtype=torch.int32)
         intermediate_hidden_states, pertoken_scale = torch_npu.npu_dequant_swiglu_quant(
             merged_x, weight_scale=self.gate_up_proj.weight_scale,
@@ -147,7 +146,7 @@ class DeepseekV3SharedExpert(nn.Module):
         self.mm_quant_mode = (
             config.quant_config.mm_quant_mode
             if config.quant_config is not None
-            else QUANT_MODE_W16A16)
+            else "w16a16")
         self.moe_tp_size = self.runner_settings.get("parallel_config").get("moe_tp_size", 1)
         self.moe_ep_size = self.runner_settings.get("parallel_config").get("moe_ep_size", 1)
         self.config = config
@@ -170,8 +169,8 @@ class DeepseekV3SharedExpert(nn.Module):
             tp_rank=dist.get_rank(self.hccl_comm_dict["moe_tp_group"]) if self.moe_tp_size > 1 else 0,
             quant_config=config.quant_config,
             prefix=f"{prefix}.down_proj")
-        if self.mm_quant_mode == QUANT_MODE_W8A8:
-            self.down_proj_forward = self.forward_a8w8
+        if self.mm_quant_mode == "w8a8":
+            self.down_proj_forward = self.forward_w8a8
         else:
             self.down_proj_forward = self.forward_normal
 
@@ -184,7 +183,7 @@ class DeepseekV3SharedExpert(nn.Module):
         intermediate_hidden_states = torch_npu.npu_swiglu(merged_x)
         return self.down_proj(intermediate_hidden_states)
 
-    def forward_a8w8(self, x):
+    def forward_w8a8(self, x):
         merged_x, pertoken_scale = self.gate_up_proj(x, out_dtype=torch.int32)
         intermediate_hidden_states, pertoken_scale = torch_npu.npu_dequant_swiglu_quant(
             merged_x, weight_scale=self.gate_up_proj.weight_scale,
@@ -208,7 +207,7 @@ class DeepseekV3MoE(nn.Module):
         self.gmm_quant_mode = (
             config.quant_config.gmm_quant_mode
             if config.quant_config is not None
-            else QUANT_MODE_W16A16)
+            else "w16a16")
         self.hidden_dim = config.hidden_size
         self.intermediate_size = config.moe_intermediate_size
         self.moe_tp_size = self.runner_settings.get("parallel_config").get("moe_tp_size", 1)
@@ -381,8 +380,8 @@ class DeepseekV3MoE(nn.Module):
                 "shared_expert_rank_num": self.shared_expert_rank_num,
                 "moe_expert_num": self.n_routed_experts,
                 "global_bs": 0,
-                "scales": self.experts.smooth_scale_1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else None,
-                "quant_mode": 2 if self.gmm_quant_mode == QUANT_MODE_W8A8 else 0,
+                "scales": self.experts.smooth_scale_1 if "a8" in self.gmm_quant_mode else None,
+                "quant_mode": 2 if "a8" in self.gmm_quant_mode else 0,
                 "group_ep": moe_ep_group_name,
                 "ep_world_size": self.moe_ep_size,
                 "ep_rank_id": global_rank // self.moe_tp_size,
@@ -445,11 +444,11 @@ class DeepseekV3MoE(nn.Module):
             hidden_states,
             expert_idx=topk_idx,
             active_num=topk_idx.shape[0] * topk_idx.shape[1],
-            scale=self.experts.smooth_scale_1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else None,
+            scale=self.experts.smooth_scale_1 if "a8" in self.gmm_quant_mode else None,
             expert_num=self.num_experts,
             expert_tokens_num_type=1,  # 0: cumsum mode(not supported now); 1: count mode
             expert_tokens_num_flag=True, active_expert_range=[0, self.num_experts],
-            quant_mode=1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else -1
+            quant_mode=1 if "a8" in self.gmm_quant_mode else -1
             # -1: non-quant; 1: dynamic quant; 0: static quant(not supported now)
         )
         return expanded_x, expanded_row_idx, tokens_per_expert, pertoken_scale, topk_weight
@@ -474,7 +473,7 @@ class DeepseekV3MoE(nn.Module):
             "group_list_type": 1,
         }
 
-        if self.gmm_quant_mode == QUANT_MODE_W8A8:
+        if "a8" in self.gmm_quant_mode:
             gmm_args.update({"pertoken_scale": gathered_pertoken_scale})
         hidden_states_ordered_by_experts = self.experts(**gmm_args)
         # finalize-rerouting
@@ -513,7 +512,7 @@ class DeepseekV3MoE(nn.Module):
             "active_expert_range": [0, self.num_experts],
             "quant_mode": -1
         }
-        if self.gmm_quant_mode == QUANT_MODE_W8A8:
+        if "a8" in self.gmm_quant_mode:
             routing_args.update({
                 "scale": self.experts.smooth_scale_1,
                 "expert_tokens_num_type": 2,
@@ -526,7 +525,7 @@ class DeepseekV3MoE(nn.Module):
         )
 
         moe_args = {"group_list_type": 1}
-        if self.gmm_quant_mode == QUANT_MODE_W8A8:
+        if "a8" in self.gmm_quant_mode:
             moe_args.update({
                 "group_list_type": 2,
                 "pertoken_scale": pertoken_scale
@@ -563,7 +562,7 @@ class DeepseekV3MoE(nn.Module):
 
         gathered_pertoken_scale = None if pertoken_scale is None else\
                             pertoken_scale.new_empty(gathered_tokens.shape[0])
-        if self.gmm_quant_mode == QUANT_MODE_W8A8:
+        if "a8" in self.gmm_quant_mode:
             dist.all_to_all_single(gathered_pertoken_scale, \
                                    pertoken_scale, output_splits, input_splits, group=moe_ep_group)
         return tokens_per_expert_group, gathered_tokens, gathered_pertoken_scale, input_splits, output_splits
@@ -579,11 +578,11 @@ class DeepseekV3MoE(nn.Module):
             x,
             expert_idx=topk_ids,
             active_num=topk_ids.shape[0] * topk_ids.shape[1],
-            scale=self.experts.smooth_scale_1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else None,
+            scale=self.experts.smooth_scale_1 if "a8" in self.gmm_quant_mode else None,
             expert_num=self.num_experts,
             expert_tokens_num_type=1,  # 0: cumsum mode(not supported now); 1: count mode
             expert_tokens_num_flag=True, active_expert_range=[0, self.num_experts],
-            quant_mode=1 if self.gmm_quant_mode == QUANT_MODE_W8A8 else -1
+            quant_mode=1 if "a8" in self.gmm_quant_mode else -1
             # -1: non-quant; 1: dynamic quant; 0: static quant(not supported now)
         )
 
@@ -628,7 +627,7 @@ class DeepseekV3MoE(nn.Module):
             "group_list_type": 1,
         }
 
-        if self.gmm_quant_mode == QUANT_MODE_W8A8:
+        if "a8" in self.gmm_quant_mode:
             gmm_args.update({"pertoken_scale": dynamic_scale})
 
         hidden_states_ordered_by_experts = self.experts(**gmm_args)
@@ -660,7 +659,7 @@ class DeepseekIndexerAttention(nn.Module):
         self.mm_quant_mode = (
             config.quant_config.mm_quant_mode
             if config.quant_config is not None
-            else QUANT_MODE_W16A16)
+            else "w16a16")
         self.batch_size = self.runner_settings.get("data_config").get("batch_size", 16)
         self.batch_size_per_rank = self.runner_settings.get("data_config").get("batch_size_per_rank", 1)
         self.attn_tp_size = self.runner_settings.get("parallel_config").get("attn_tp_size", 1)
@@ -809,8 +808,9 @@ class DeepseekIndexerAttention(nn.Module):
         self.exe_mode = self.runner_settings.get("exe_mode", "eager")
         self.global_rank = kwargs.get("global_rank")
         self.enable_multi_streams = self.runner_settings.get("model_config").get("enable_multi_streams", False)
-        self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
-        if self.kv_cache_c8:
+        self.kv_cache_quant_mode = config.quant_config.kv_cache_quant_mode \
+            if config.quant_config is not None else "unquant"
+        if self.kv_cache_quant_mode == "int8":
             self.ckv_a_alpha = torch.nn.Parameter(torch.ones(1, dtype=torch.float), requires_grad=False)
             # empty tensor input for kr_cache
             # Its shape can be specified arbitrarily, but one of its dimensions must be 0
@@ -819,8 +819,8 @@ class DeepseekIndexerAttention(nn.Module):
         self.enable_offload = self.runner_settings.get("model_config").get("enable_offload", False)
         self.index_topk = self.config.index_topk
         self.last_dim = self.kv_lora_rank + self.qk_rope_head_dim * 2 + 4 * 4 \
-            if self.kv_cache_c8 else self.kv_lora_rank
-        
+            if self.kv_cache_quant_mode == "int8" else self.kv_lora_rank
+
     def mla_epilog(
         self,
         attn_output: torch.Tensor = None,
@@ -837,7 +837,7 @@ class DeepseekIndexerAttention(nn.Module):
             # with appropriate tensor stride for the later 'view' operation if oproj_tp_size > 1.
             # after reshape: [T(bs*q_len), 1, N//attn_tp_size*D]
             attn_output = attn_output.reshape(-1, 1, self.num_heads // self.attn_tp_size * self.v_head_dim)
-        
+
         if self.oproj_tp_size > 1:
             # after view: (bs*q_len, oproj_tp_size, num_heads // oproj_tp_size * v_head_dim)
             attn_output = attn_output.view(-1, self.oproj_tp_size,
@@ -962,7 +962,7 @@ class DeepseekIndexerAttention(nn.Module):
 
         output = self.mla_epilog(attn_output, absorb=True)
         return output
-    
+
     def forward_absorb_cp(
         self,
         hidden_states: torch.Tensor,
@@ -1084,7 +1084,7 @@ class DeepseekIndexerAttention(nn.Module):
         # When kv_cache_c8 is enabled, nope_cache, rope_cache, and scales
         # are concatenated and passed via the k_nope input.
         # In this case, an empty tensor must be passed for the k_rope input.
-        if self.kv_cache_c8:
+        if self.kv_cache_quant_mode == "int8":
             mla_prolog_input_args.update({
                 "kr_cache": self.fake_kr_cache,
                 "kv_cache_quant_mode": 3,
@@ -1098,8 +1098,8 @@ class DeepseekIndexerAttention(nn.Module):
         q_nope, q_pe, dequant_scale_q_nope, qr, dequant_q_norm = torch.ops.custom.npu_mla_prolog_v3(
             **mla_prolog_input_args
         )
-        
-        if self.kv_cache_c8:
+
+        if self.kv_cache_quant_mode == "int8":
             latent_cache = nope_cache.view(-1, nope_cache.shape[-1])[: bsz * q_len, :]
         else:
             latent_cache = torch.cat([
@@ -1123,7 +1123,7 @@ class DeepseekIndexerAttention(nn.Module):
                 nope_cache = past_key_value[self.layer_idx][0]
                 rope_cache = past_key_value[self.layer_idx][1]
 
-            if self.kv_cache_c8:
+            if self.kv_cache_quant_mode == "int8":
                 torch_npu.npu_scatter_nd_update_(nope_cache.view(-1, nope_cache.shape[-1]),
                                              slot_mapping.view(-1, 1),
                                              latent_cache.view(-1, latent_cache.shape[-1]))
@@ -1136,9 +1136,9 @@ class DeepseekIndexerAttention(nn.Module):
                 torch_npu.npu_scatter_nd_update_(rope_cache.view(-1, self.qk_rope_head_dim),
                                                 slot_mapping.view(-1, 1),
                                                 k_pe.view(-1, k_pe.shape[-1]))
-        if self.kv_cache_c8:
+        if self.kv_cache_quant_mode == "int8":
             c8_input_dict.update({'pertoken_scale': dequant_q_norm})
-        
+
         return q_nope, q_pe, qr, nope_cache, rope_cache
 
     def mlaprolog_decode(
@@ -1160,7 +1160,7 @@ class DeepseekIndexerAttention(nn.Module):
                                 self.config.quant_config is not None else None
         # when weight_quant_mode = 0, no quant applied, when 1 only qb quantization is enabled
         weight_quant_mode = 1 if self.config.quant_config is not None else 0
-        
+
         mla_prolog_input_args = {
             "token_x": hidden_states,
             "weight_dq": self.q_a_proj.weight,
@@ -1181,7 +1181,8 @@ class DeepseekIndexerAttention(nn.Module):
             "query_norm_flag": True,
             "weight_quant_mode": weight_quant_mode
         }
-        if self.kv_cache_c8:
+
+        if self.kv_cache_quant_mode == "int8":
             mla_prolog_input_args.update({
                 "kr_cache": self.fake_kr_cache,
                 "kv_cache_quant_mode": 3,
@@ -1195,10 +1196,10 @@ class DeepseekIndexerAttention(nn.Module):
         q_nope, q_pe, dequant_scale_q_nope, qr, dequant_q_norm = torch.ops.custom.npu_mla_prolog_v3(
             **mla_prolog_input_args
         )
-        if self.kv_cache_c8:
+        if self.kv_cache_quant_mode == "int8":
             c8_input_dict.update({'pertoken_scale': dequant_q_norm})
         return q_nope, q_pe, qr, nope_cache, rope_cache
-  
+
     def prepare_qkv(
         self,
         hidden_states: torch.Tensor,
@@ -1241,7 +1242,7 @@ class DeepseekIndexerAttention(nn.Module):
                     nope_cache_dst = past_key_value[self.layer_idx][0].view(bsz, -1, 1, self.last_dim)
                     nope_cache_src = nope_cache.view(bsz, -1, 1, self.last_dim)
                     nope_cache_dst.copy_(nope_cache_src, non_blocking=True)
-                    if not self.kv_cache_c8:
+                    if not self.kv_cache_quant_mode == "int8":
                         rope_cache_dst = past_key_value[self.layer_idx][1].view(bsz, -1, 1, self.qk_rope_head_dim)
                         rope_cache_src = rope_cache.view(bsz, -1, 1, self.qk_rope_head_dim)
                         rope_cache_dst.copy_(rope_cache_src, non_blocking=True)
@@ -1288,8 +1289,8 @@ class DeepseekIndexerAttention(nn.Module):
             selection_k_rope = offload_cache.selected_key_values[self.layer_idx][1]
             selection_kv_cache = offload_cache.selected_key_values[self.layer_idx][0]
             full_kv_cache = k_nope.squeeze(2)
-            full_k_rope = k_pe.squeeze(2) if not self.kv_cache_c8 else offload_cache.empty_rope
-            
+            full_k_rope = k_pe.squeeze(2) if not self.kv_cache_quant_mode == "int8" else offload_cache.empty_rope
+
             selection_kv_block_table = offload_cache.selection_kv_block_table[self.layer_idx]
             selection_kv_block_status = offload_cache.selection_kv_block_status[self.layer_idx]
 
@@ -1300,7 +1301,7 @@ class DeepseekIndexerAttention(nn.Module):
                 topk_indices, full_k_rope, full_kv_cache,
                 block_table, actual_seq_lengths_kv,
                 actual_seq_qlen, selection_topk_block_size=1)
-            
+
             default_topk_indices = offload_cache.default_topk_indices
             sparse_indices = torch.where(default_topk_indices < selection_kv_actual_seq.unsqueeze(1), \
                                          default_topk_indices, -1)
@@ -1322,7 +1323,7 @@ class DeepseekIndexerAttention(nn.Module):
                 "key": selection_kv_cache.unsqueeze(2),
                 "value": selection_kv_cache.unsqueeze(2),
             })
-            if not self.kv_cache_c8:
+            if not self.kv_cache_quant_mode == "int8":
                 k_pe = selection_k_rope.unsqueeze(2)
 
         else:
@@ -1340,8 +1341,8 @@ class DeepseekIndexerAttention(nn.Module):
                 "layout_kv": 'PA_BSND',
                 "sparse_mode": 3,
             }
-        
-        if self.kv_cache_c8:
+
+        if self.kv_cache_quant_mode == "int8":
             q = torch.cat([q_nope, q_pe], dim=-1).contiguous()
             slc_fa_input_kwargs.update({
                 "query": q,
@@ -1354,16 +1355,16 @@ class DeepseekIndexerAttention(nn.Module):
                 "key_dequant_scale": None,
                 "value_dequant_scale": None
             })
-            
+
             slc_fa_fusion = torch.ops.custom.npu_sparse_flash_attention_antiquant(**slc_fa_input_kwargs)
-            
+
         else:
             slc_fa_input_kwargs.update({
                 "query_rope": q_pe,
                 "key_rope": k_pe,
             })
             slc_fa_fusion = torch.ops.custom.npu_sparse_flash_attention(**slc_fa_input_kwargs)
-        
+
         slc_fa_fusion = slc_fa_fusion.transpose(0, 1)
         return slc_fa_fusion
 
@@ -1495,7 +1496,7 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
                 tp_rank=dist.get_rank(self.hccl_comm_dict["embed_tp_group"]) if self.embed_tp_size > 1 else 0)
         else:
             self.embed_tokens = None
-        
+
         self.layers = nn.ModuleList(
             [
                 DeepseekV3DecoderLayer(
@@ -1692,7 +1693,7 @@ class DeepseekV3ModelMTPLayer(DeepseekV3Model):
             slot_mapping=slot_mapping,
             offload_cache=offload_cache
         )
-    
+
 
 class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
@@ -1710,7 +1711,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         self.next_n = self.runner_settings.get("model_config").get("next_n", 0)
         self.is_mtp = is_mtp
         self.enable_cache_compile = self.runner_settings.get("model_config").get("enable_cache_compile", False)
-        self.kv_cache_c8 = config.quant_config.kv_cache_c8 if config.quant_config is not None else False
+        self.kv_cache_quant_mode = config.quant_config.kv_cache_quant_mode \
+            if config.quant_config is not None else "unquant"
 
         self.local_rank = int(os.getenv("LOCAL_RANK", "0"))
         self.rank_offset = int(os.getenv("RANK_OFFSET", "0"))
@@ -1830,7 +1832,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         attn_tp_group = init_comm_group(
             global_rank=global_rank, group_num=self.attn_dp_size, world_size=world_size,
             group_stride=1, group_name="attn_tp_group")
-        
+
         oproj_tp_group = init_comm_group(
             global_rank=global_rank, group_num=world_size // self.oproj_tp_size, world_size=world_size,
             group_stride=1, group_name="oproj_tp_group")
@@ -1868,7 +1870,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             global_rank=global_rank, group_num=self.moe_tp_size, world_size=world_size,
             group_stride=self.moe_tp_size, group_name="moe_ep_group", return_name=True,
             hccl_buffer_size=hccl_buffer_size)
-        
+
         cp_group = init_comm_group(
             global_rank=global_rank, group_num=world_size // self.cp_size, world_size=world_size,
             group_stride=1, group_name="cp_group")
@@ -1934,7 +1936,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
             logits = new_logits.reshape(bs * q_len, logits.shape[1], self.config.vocab_size)
         logits = logits.reshape(bs, q_len, -1).float()
         return logits
-    
+
     def prepare_input_cp(
         self,
         input_ids: torch.Tensor,
@@ -1968,18 +1970,18 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         cp_input_dict.update({"cp_reverse_index": cp_reverse_index})
         reverse_split_list = seq_per_batch.repeat_interleave(2).repeat(self.cp_size).view(-1).int().tolist()
         cp_input_dict.update({"reverse_split_list": reverse_split_list})
-        
+
         kv_len = torch.ceil(kv_len / (self.cp_size * 2)).to(torch.int64)
         kv_len_prev = kv_len * (self.global_rank + 1)
         cp_input_dict.update({"kv_len_prev": kv_len_prev})
         kv_len_next = kv_len * (self.cp_size * 2 - self.global_rank)
         cp_input_dict.update({"kv_len_next": kv_len_next, "actual_seq_q": kv_len.cumsum(dim=-1)})
 
-        cp_tmpkv_cache_num_block = (batch_size * seq_len // self.cp_size + 
+        cp_tmpkv_cache_num_block = (batch_size * seq_len // self.cp_size +
                                     self.block_size) // self.block_size
-        
+
         cache_last_dim = self.config.kv_lora_rank + self.config.qk_rope_head_dim * 2 + 16 \
-            if self.kv_cache_c8 else self.config.kv_lora_rank
+            if self.kv_cache_quant_mode == "int8" else self.config.kv_lora_rank
         cp_tmpkv_cache_nope_shape = (
                         cp_tmpkv_cache_num_block,
                         self.block_size,
@@ -1993,10 +1995,10 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                         1,
                         self.config.qk_rope_head_dim
                     )
-        dtype = torch.int8 if self.kv_cache_c8 else self.config.torch_dtype
+        dtype = torch.int8 if self.kv_cache_quant_mode == "int8" else self.config.torch_dtype
         cp_tmp_kv_cache_nope = torch.zeros(cp_tmpkv_cache_nope_shape, dtype=dtype, device=input_ids.device)
         cp_input_dict.update({"cp_tmp_kv_cache_nope": cp_tmp_kv_cache_nope})
-        if not self.kv_cache_c8:
+        if not self.kv_cache_quant_mode == "int8":
             cp_tmp_kv_cache_rope = torch.zeros(cp_tmpkv_cache_rope_shape, dtype=dtype, device=input_ids.device)
         else:
             cp_tmp_kv_cache_rope = None
@@ -2096,13 +2098,13 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         num_hidden_layers=61,
     ):
         cache_seq_len = self.max_position_embeddings
-        dtype = torch.int8 if self.kv_cache_c8 else self.config.torch_dtype
+        dtype = torch.int8 if self.kv_cache_quant_mode == "int8" else self.config.torch_dtype
 
-        # When the kvcache INT8 quantization is enabled 
+        # When the kvcache INT8 quantization is enabled
         # nope_cache, rope_cache, and nope_scale need to be concatenated for SFA/MLAprolog kernel in INT8 dtype.
         # kv_lora_rank(INT8) + qk_rope_head_dim(BF16) * 2(->INT8) + kv_scale(FP32) * 4(->INT8)
         cache_last_dim = self.config.kv_lora_rank + self.config.qk_rope_head_dim * 2 + 4 * 4 \
-            if self.kv_cache_c8 else self.config.kv_lora_rank
+            if self.kv_cache_quant_mode == "int8" else self.config.kv_lora_rank
         past_key_values = ()
         cache_nope_shape = (
                         self.kv_cache_num_block,
@@ -2117,10 +2119,10 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                         1,
                         self.config.qk_rope_head_dim
                     )
-        
+
         for _ in range(num_hidden_layers):
             cache_nope = torch.zeros(cache_nope_shape, dtype=dtype, device=device)
-            if self.kv_cache_c8:
+            if self.kv_cache_quant_mode == "int8":
                 past_key_values += ((cache_nope, None),)
             else:
                 cache_rope = torch.zeros(cache_rope_shape, dtype=dtype, device=device)
@@ -2134,10 +2136,10 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         num_hidden_layers=61,
     ):
         cache_seq_len = self.max_position_embeddings
-        dtype = torch.int8 if self.kv_cache_c8 else self.config.torch_dtype 
+        dtype = torch.int8 if self.kv_cache_quant_mode == "int8" else self.config.torch_dtype
 
         past_key_values = ()
-        past_key_scales = () if self.kv_cache_c8 else None
+        past_key_scales = () if self.kv_cache_quant_mode == "int8" else None
         cache_key_shape = (
                         self.kv_cache_num_block,
                         self.block_size,
@@ -2153,7 +2155,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         for _ in range(num_hidden_layers):
             key_cache = torch.zeros(cache_key_shape, dtype=dtype, device=device)
             past_key_values += ((key_cache, ),)
-            if self.kv_cache_c8:
+            if self.kv_cache_quant_mode == "int8":
                 key_scales_cache = torch.zeros(cache_key_scales_shape, dtype=torch.float16, device=device)
                 past_key_scales += ((key_scales_cache, ),)
 
@@ -2192,7 +2194,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                 ]
                 cur_topk_list = torch.Tensor(cur_topk_list_decode).int().view(batch_size * seq_len, -1).npu()
         return cur_topk_list
-    
+
     def get_slot_mapping(
         self,
         kv_len,
@@ -2200,7 +2202,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         device
     ):
         '''
-        Prefill: 
+        Prefill:
         Attention input format is [T(B*S), N, D], every index for kv_cache update needs to
         add offset which represents interval between adjacent batches.
         '''
@@ -2436,7 +2438,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
     ):
 
         batch_size, seq_length = input_ids.shape
-        if is_prefill:	
+        if is_prefill:
             cp_input_dict = self.prepare_input_cp(
                 input_ids, kv_len
             )
@@ -2444,7 +2446,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
 
         cos_sin = self.rotary_emb(hidden_states, position_ids, kv_len, self.max_position_embeddings)
         residual = None
-        
+
         if is_prefill and self.cp_size > 1:
             hidden_states_list = list(torch.split(hidden_states.flatten(0, 1), cp_input_dict["split_list"], dim=0))
             position_id_list = list(torch.split(position_ids.flatten(0, 1), cp_input_dict["split_list"], dim=-1))
@@ -2455,7 +2457,7 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
                 [position_id_list[i] for i in cp_input_dict["zigzag_index"]], dim=-1
             ).view(batch_size, -1)
             cos_sin += self.rotary_emb(hidden_states, position_ids_cur, kv_len, self.max_position_embeddings)
-        
+
         hidden_states = self.enorm(hidden_states)
         prev_hidden_states = self.hnorm(prev_hidden_states)
         hidden_states_eh = torch.cat([hidden_states, prev_hidden_states], dim=-1)

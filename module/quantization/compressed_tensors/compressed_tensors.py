@@ -28,8 +28,6 @@ from module.fuse_moe_gmm import FusedMoEGMM
 from .utils import (find_matched_target, is_activation_quantization_format, should_ignore_layer)
 
 QUANTIZATION_SCHEME_MAP_TYPE = dict[str, Optional[dict[str, QuantizationArgs]]]
-QUANT_MODE_W8A8 = "W8A8"
-QUANT_MODE_W16A16 = "W16A16"
 
 
 class CompressedTensorsConfig(QuantizationConfig):
@@ -49,14 +47,17 @@ class CompressedTensorsConfig(QuantizationConfig):
         # Map from [target -> scheme]
         self.target_scheme_map = target_scheme_map
         self.kv_cache_scheme = kv_cache_scheme
-        self.kv_cache_c8 = (kv_cache_scheme.get("num_bits", None) == 8) if \
-            kv_cache_scheme is not None else False
+        if kv_cache_scheme is not None:
+            self.kv_cache_quant_mode = \
+                kv_cache_scheme.get("type", "int") + str(kv_cache_scheme.get("num_bits", 16))
+        else:
+            self.kv_cache_quant_mode = "unquant"
         self.sparsity_scheme_map = sparsity_scheme_map
         self.sparsity_ignore_list = sparsity_ignore_list
         self.config = config
-        # quant_mode default QUANT_MODE_W16A16, will be initalized in function from_config()
-        self.mm_quant_mode = QUANT_MODE_W16A16
-        self.gmm_quant_mode = QUANT_MODE_W16A16
+        # quant_mode default w16a16, will be initalized in function from_config()
+        self.mm_quant_mode = "w16a16"
+        self.gmm_quant_mode = "w16a16"
 
     def get_linear_method(self) -> "CompressedTensorsLinearMethod":
         return CompressedTensorsLinearMethod(self)
@@ -157,12 +158,14 @@ class CompressedTensorsConfig(QuantizationConfig):
                     raise ValueError(f"quant format {quant_format} is not valid")
         return target_scheme_map
 
-    def _get_quant_mode(self, target_scheme_map: dict[str, Any], target: str) -> str:   
-        weight_quant_mode = "W" + str(
+    def _get_quant_mode(self, target_scheme_map: dict[str, Any], target: str) -> str:
+        # get quant mode from quant_config
+        # it's a string formed by concatenating num_bits of weights and num_bits of activations.
+        weight_quant_mode = "w" + str(
             target_scheme_map[target].get("weights").num_bits
             if target_scheme_map[target].get("weights") is not None
             else "16")
-        input_quant_mode = "A" + str(
+        input_quant_mode = "a" + str(
             target_scheme_map[target].get("input_activations").num_bits
             if target_scheme_map[target].get("input_activations") is not None
             else "16")
