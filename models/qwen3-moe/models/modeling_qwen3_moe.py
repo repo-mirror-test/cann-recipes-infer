@@ -1432,7 +1432,7 @@ class Qwen3MoeForCausalLM(Qwen3MoePreTrainedModel):
     ):
         batch_size, seq_len = input_ids.size()
         if past_key_values is None:
-            past_key_values = self.init_cache(input_ids)
+            raise ValueError("past_key_values should be initialized first!")
         if is_prefill:
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)

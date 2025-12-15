@@ -112,7 +112,20 @@ class InferMTP(nn.Module):
 
 
     def get_inputs(self, prompts):
-        inputs = self.main_model.tokenize_prompts(prompts)
+        tokenizer = self.main_model.tokenizer
+        kwargs = {
+            "return_tensors": "pt", "truncation": True, "padding": "max_length",
+            "max_length": self.main_model.input_max_len,
+            "add_generation_prompt": True, "return_dict": True
+        }
+        if self.runner_settings.get("data_config").get("dataset", "default") != "default":
+            from executor.utils.data_utils import build_dataset_input
+            prompts = build_dataset_input(tokenizer, prompts, self.main_model.input_max_len,
+                                          self.main_model.max_new_tokens, is_chat=True)
+        input_prompts = []
+        for prompt in prompts:
+            input_prompts.append([{"role": "user", "content": prompt}])
+        inputs = tokenizer.apply_chat_template(input_prompts, **kwargs).to(self.main_model.device)
         # 2048: fixed shape of mask, used in PFA
         share_mask_tril_main = get_init_attn_mask(2048, self.main_model.device)
         share_mask_tril_mtp = get_init_attn_mask(2048, self.mtp_model.device)

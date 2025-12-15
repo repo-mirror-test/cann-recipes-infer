@@ -2556,9 +2556,12 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                                         offset * self.experts_per_rank + tokens_per_rank_decode)]
                 cur_topk_list = torch.Tensor(cur_topk_list_decode).int().view(batch_size * seq_len, -1).npu()
             else:
-                step_decode = batch_size * self.top_k * seq_len
+                expanded_tokens = batch_size * self.config.num_experts_per_tok * seq_len
+                step_gap = self.config.n_routed_experts // self.moe_ep_size \
+                            if expanded_tokens < self.config.n_routed_experts else 1
                 cur_topk_list_decode = [
-                    (i + global_rank) % self.config.n_routed_experts for i in range(step_decode)
+                    ((i + global_rank // step_gap * step_gap) * step_gap + 
+                    global_rank % step_gap) % self.config.n_routed_experts for i in range(expanded_tokens)
                 ]
                 cur_topk_list = torch.Tensor(cur_topk_list_decode).int().view(batch_size * seq_len, -1).npu()
         return cur_topk_list

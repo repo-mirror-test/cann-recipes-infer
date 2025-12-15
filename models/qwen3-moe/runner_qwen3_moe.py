@@ -58,6 +58,7 @@ class Qwen3MoeRunner(ModelRunner):
         self.with_ckpt = runner_settings.get("model_config").get("with_ckpt", True)
         self.attn_dp_size = runner_settings.get("parallel_config").get("attn_dp_size", 1)
         self.enable_cache_compile = runner_settings.get("model_config").get("enable_cache_compile", False)
+        self.past_key_values = None
 
     @staticmethod
     def repeat_batch(tensor, repeat_num):
@@ -141,10 +142,13 @@ class Qwen3MoeRunner(ModelRunner):
         is_prefill = input_dict.get("is_prefill")
         kv_len = input_dict.get("kv_len")
         share_mask_tril = input_dict.get("share_mask_tril")
+        if past_key_values is None:
+            self.past_key_values = self.model.init_cache(input_ids)
+            input_dict["past_key_values"] = self.past_key_values
         model_inputs = self.model.prepare_inputs_for_generation(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            past_key_values=past_key_values,
+            past_key_values=self.past_key_values,
             is_prefill=is_prefill,
             kv_len=kv_len,
             input_lens=input_dict.get("input_lens"),
@@ -168,15 +172,7 @@ class Qwen3MoeRunner(ModelRunner):
         input_dict['kv_len'] = kv_len
 
         logits = outputs
-        past_key_values = model_inputs.get("past_key_values")
-        past_key_values_batch = ()
-        for past_key_values_layer_i in past_key_values:
-            cache_new_i = ()
-            for cache_j in past_key_values_layer_i:
-                cache_j_new = cache_j
-                cache_new_i += (cache_j_new, )
-            past_key_values_batch += (cache_new_i, )
-        input_dict["past_key_values"] = past_key_values_batch
+        input_dict["past_key_values"] = model_inputs.get("past_key_values")
 
         attention_mask = None
 
@@ -194,7 +190,20 @@ class Qwen3MoeRunner(ModelRunner):
 
     @override
     def model_generate(self, prompts, warm_up=False):
-        inputs = self.tokenize_prompts(prompts)
+        tokenizer = self.tokenizer
+        kwargs = {
+            "return_tensors": "pt", "truncation": True, "padding": "max_length",
+            "max_length": self.input_max_len,
+            "add_generation_prompt": True, "return_dict": True
+        }
+        if self.runner_settings.get("data_config").get("dataset", "default") != "default":
+            from executor.utils.data_utils import build_dataset_input
+            prompts = build_dataset_input(tokenizer, prompts, self.input_max_len,
+                                          self.max_new_tokens, is_chat=True)
+        input_prompts = []
+        for prompt in prompts:
+            input_prompts.append([{"role": "user", "content": prompt}])
+        inputs = tokenizer.apply_chat_template(input_prompts, **kwargs).to(self.device)
 
         # get init input_dict
         share_mask_tril = get_init_attn_mask(2048, self.device)
@@ -204,7 +213,8 @@ class Qwen3MoeRunner(ModelRunner):
         input_dict = {
             "input_ids": inputs.input_ids, "generate_ids": inputs.input_ids,
             "input_lens": input_lens, "kv_len": None,
-            "past_key_values": None, "attention_mask": inputs.attention_mask, "share_mask_tril": share_mask_tril,
+            "past_key_values": self.past_key_values, 
+            "attention_mask": inputs.attention_mask, "share_mask_tril": share_mask_tril,
             "is_prefill": True,
         }
         super().model_generate(input_dict, input_lens, warm_up=warm_up)

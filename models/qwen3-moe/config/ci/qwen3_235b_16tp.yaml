@@ -6,13 +6,13 @@ world_size: 16
 model_config:
   enable_profiler: False  # [False, True]
   with_ckpt: True # [False, True]
-  enable_cache_compile: False
+  enable_cache_compile: True
   enable_online_split_weight: True # [False, True]
 
 data_config:
   dataset: "LongBench"  # ["default", "LongBench"]
-  input_max_len: 4080
-  max_new_tokens: 16
+  input_max_len: 4096
+  max_new_tokens: 256
   batch_size: 1  # global batch_size, should be divisible by ep_size
 
 parallel_config:

@@ -129,7 +129,7 @@ source ${cann_path}/bin/setenv.bash
 
 **长序列请求out of memory问题处理<a id="long_bench_faq"></a>**
 
-长序列请求可能导致device内存out of memory，尤其是在perfill阶段:
+长序列请求可能导致device内存out of memory，尤其是在prefill阶段:
 
 - Attention的Softmax操作通常为float32计算，其内存大小为batch_size * num_heads * q_s * kv_s * (2Bytes + 4Bytes)。
 
