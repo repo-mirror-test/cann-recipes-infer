@@ -236,7 +236,7 @@ DSA的计算过程可分为MLAProlog、IndexerProlog、Lightning Indexer、Spars
 
 ## 量化策略
 
-相对于BF16推理，Int8量化可以有效降低端到端时延，提升系统吞吐。目前本实践已经支持W8A8C8量化，部分Linear层使用W8A8量化，KVCache和Indexer Cache使用C8量化。量化架构如下：
+相对于BF16推理，Int8量化可以有效降低端到端时延，提升系统吞吐。目前本实践已经支持W8A8C8/W4A8C8量化，量化架构如下：
 
 <p align="center">
   <img src="./figures/w8a8c8_quantization.png" width="70%" alt="decode_parallel">
@@ -252,7 +252,7 @@ DSA的计算过程可分为MLAProlog、IndexerProlog、Lightning Indexer、Spars
 - Sparse Flash Attention：KVCache Int8存储，BF16计算；
 - IndexerProlog：除Q_b_proj使用W8A8，其他Linear均不量化；Indexer Q使用A8量化；Indexer Cache使用C8量化；
 - Lightning Indexer: BatchMatmtul使用Int8计算；
-- MoE：路由专家和共享专家使用W8A8量化；
+- MoE：路由专家使用W8A8/W4A8量化，共享专家使用W8A8量化；
 - MLAEpilog：O_proj使用W8A8量化；
 - LM_Head：暂不量化。
 
@@ -264,19 +264,21 @@ KVCache C8：表示KVCache 使用动态Per-Token-Head-Tile-128 Int8量化；**
 
 
 
-W8A8C8对线性层量化数量较少，MLA线性层只量化了`q_b_proj`和`w_o_proj`，Indexer线性层只量化`wq_b_proj`。主要原因是IndexerProlog融合算子设计成`weights_proj`出fp16,且不做量化，因此MLA输入关联的Linear统一不做量化，好处是可将同一份BF16数据输入IndexerProlog和MLAProlog。
+W8A8C8对线性层量化数量较少，MLA线性层只量化了`q_b_proj`和`w_o_proj`，Indexer线性层只量化`wq_b_proj`。主要原因是IndexerProlog融合算子设计成`weights_proj`出fp16，且不做量化，因此MLA输入关联的Linear统一不做量化，好处是可将同一份BF16数据输入IndexerProlog和MLAProlog。
 
-其次，MLAProlog KVCache使用动态存8算16，由于SparseFlashAttention耗时瓶颈点在离散聚合访存，即使实现存8算8，端到端时延依旧无法提升，。
+其次，MLAProlog KVCache的量化策略使用了动态存8算16。在超长序列情况下，W8A8C8量化精度接近无损，同时权重内存占用优化2倍。MLA C8算16获取内存收益，可以打高吞吐量。另一方面，LightningIndexer的A8C8获取计算收益，降低LI计算时延，TTFT和TPOT也同步优化。
 
-在超长序列情况下，W8A8C8量化精度接近无损，同时权重内存占用优化2倍。MLA C8算16获取内存收益，可以打高吞吐量。另一方面，LightningIndexer的A8C8获取计算收益，降低LI计算时延,TTFT和TPOT也同步优化。
+W4A8C8量化版本针对`DeepSeek-V3.2-Exp`使用基于学习的量化算法优化Clamp参数，缓解W4A8离群值量化困难的问题，实现了较优的量化模型精度。同时，W4A8C8版本比W8A8C8节约MoE权重显存2x，因此在大EP场景下，利用W4A8 MoEGMM算子，同一张卡可以装下更多的专家，节约资源，优化计算访存比，实现单机部署。
+
+
 
 **量化模型精度表现**
 
 | 模型 | MMLU | GPQA | DROP | MGSM |
 | ---- | ---- | ---- | ---- | ---- |
-| BF16 | 89.9 | 73.6 | 88.9 | 92.4 |
-| W8A8C8 | 89.8 | 74 | 88.4 | 92 |
-
+| DeepSeek-V3.2-BF16 | 90.8 | 75.85 | 87.57 | 90.9 |
+| DeepSeek-V3.2-Exp-W8A8C8 | 90.62 | 75.90 | 87.41 | 90.87 |
+| DeepSeek-V3.2-Exp-W4A8C8 | 90.66 | 76.5 | 87.68 | 91.3 |
 
 ## 多流并行优化
 
@@ -326,6 +328,8 @@ Decode阶段，每一层计算得到的当前Token的Cache更新到Host内存上
 
 ## Benchmark
 
+#### W8A8C8
+
 基于 Atlas A3，本实践对 DeepSeek-V3.2-Exp 与 DeepSeek-V3.1 W8A8C8 版本进行了性能Benchmark 测试。从吞吐对比曲线可见，随着序列长度增加，DeepSeek-V3.2-Exp 的性能优势逐步扩大，当序列长度达到 128K 时，其吞吐达到 DeepSeek-V3.1 的 450%。
 
 <p align="center">
@@ -342,6 +346,21 @@ Decode阶段，每一层计算得到的当前Token的Cache更新到Host内存上
 | 512               | 131072     | 64    | 25.8      | 310                     |
 
 > 注：性能数据基于 MTP3 与 perfect eplb 配置采集，平均 3 个 draft token 中 accept token 为 1.44 个。
+
+#### MoE W4A8 + Attention W8A8C8
+
+本实践新增了MoE部分W4A8量化的支持，针对权重较大存在搬运bound的场景，W4A8能够有效减少内存占用并降低权重搬运耗时，从而显著提升推理性能。基于Atlas A3环境，本实践对MoE W4A8量化特性进行了Benchmark测试。相同集群规模和配置下，相比W8A8量化，模型推理性能得到了一定的提升，且单芯片上的权重越大，性能提升效果越明显。
+
+| MoE Quant Mode | Global Batch Size | Chips | TPOT (ms) | Throughput (tokens/p/s) |
+| -------------- | ----------------- | ----- | --------- | ----------------------- |
+| W8A8           | 64                | 32    | 20.81     | 96                      |
+| W4A8           | 64                | 32    | 20.18     | 99                      |
+| W8A8           | 32                | 16    | 24.39     | 82                      |
+| W4A8           | 32                | 16    | 22.51     | 89                      |
+
+> 注：性能数据基于相同输入序列长度65536，MTP及其他配置同上。
+
+#### KVCache Offload
 
 基于 Atlas A3 环境，在 DeepSeek-V3.2-Exp 模型使能 W8A8C8 量化的基础上，对 KVCache Offload 特性进行了 Benchmark 测试。同等序列长度下，通过使能 KVCache Offload 技术方案，相比非 Offload，模型推理支持的最大 batch size 可以翻倍。下图展示了 Offload 的内存收益，固定序列长度为 64K，相比非 Offload，在使用 Offload 时 global batch size 可从 1024 增长到 2048；固定 global batch size 为 128，使用 Offload 时序列长度可从 256K 增长到 384K。
 
