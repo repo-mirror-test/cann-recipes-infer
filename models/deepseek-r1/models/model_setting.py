@@ -17,8 +17,18 @@ def update_vars(world_size, runner_settings):
     max_position_embeddings = runner_settings.get("data_config").get("max_position_embeddings", 64)
     pa_block_size = runner_settings.get("model_config").get("pa_block_size", 128)
     runner_settings = update_settings(runner_settings, "model_config", "pa_max_length",
-                                        align_up(max_position_embeddings, pa_block_size)
-                                        )
+                                      align_up(max_position_embeddings, pa_block_size))
+    attn_tp_size = runner_settings.get("parallel_config").get("attn_tp_size", 1)
+    moe_ep_size = runner_settings.get("parallel_config").get("moe_ep_size", 1)
+    # Enable TP for attention + EP for MoE → activate SP sharding.
+    if attn_tp_size > 1 and moe_ep_size > 1:
+        input_max_len = runner_settings.get("data_config").get("input_max_len", 32)
+        max_new_tokens = runner_settings.get("data_config").get("max_new_tokens", 32)
+        next_n = runner_settings.get("model_config").get("next_n", 0)
+        input_max_len = align_up(input_max_len, attn_tp_size)
+        max_position_embeddings = max_new_tokens * (next_n + 1) + input_max_len
+        runner_settings = update_settings(runner_settings, "data_config", "max_position_embeddings",
+                                          max_position_embeddings)
 
     if runner_settings.get("exe_mode") == "acl_graph" and os.getenv("TASK_QUEUE_ENABLE", "2") != "1":
         os.environ["TASK_QUEUE_ENABLE"] = "1"  # aclgraph only supports TASK_QUEUE_ENABLE 0 or 1

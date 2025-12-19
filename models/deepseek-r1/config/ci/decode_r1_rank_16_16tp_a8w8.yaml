@@ -6,6 +6,7 @@ world_size: 16
 model_config:
   enable_pa: True                   # [False, True]
   pa_block_size: 128
+  next_n: 3                         # [0, 1, 2, 3]
   enable_mla_prolog: True           # [False, True]
   enable_weight_nz: True            # [False, True]
   with_ckpt: True                   # [False, True]

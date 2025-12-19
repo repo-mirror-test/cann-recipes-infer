@@ -56,7 +56,7 @@ class InferMTP(nn.Module):
                 # main model
                 model_inputs = self.main_model.model_input_prepare(input_dict_main)
                 outputs = self.main_model.model_inference(model_inputs,
-                                                            is_prefill=input_dict_main['is_prefill'], warm_up=warm_up)
+                                                          is_prefill=input_dict_main['is_prefill'], warm_up=warm_up)
                 # The outputs is a tuple containing logits, inference_time and prev_hidden_states.
                 logits, infer_time_main, prev_hidden_states = outputs
                 step_time += infer_time_main
@@ -253,8 +253,8 @@ class InferMTP(nn.Module):
             input_dict['spec_tokens'] = torch.cat([input_dict['spec_tokens'], spec_token], dim=-1)
 
         input_dict["past_key_values"] = past_key_values_cur
-
-        prev_hidden_states = prev_hidden_states.view(batch_size, -1, prev_hidden_states.shape[-1]) # (B, S, H)
+        if not self.mtp_model.enable_prefill_multi_cycle and input_dict['is_prefill']:
+            prev_hidden_states = prev_hidden_states.view(batch_size, -1, prev_hidden_states.shape[-1]) # (B, S, H)
 
         input_dict['prev_hidden_states'] = torch.cat([input_dict['prev_hidden_states'], 
                     prev_hidden_states[:, -1:, :]], dim=1)[:, -prev_hidden_states.shape[1]:, :]
