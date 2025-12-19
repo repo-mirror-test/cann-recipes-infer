@@ -273,7 +273,7 @@ class ModelRunner:
         pass
         return None
 
-    def model_inference(self, model_inputs, is_prefill):
+    def model_inference(self, model_inputs, is_prefill, warm_up=False):
         torch.npu.synchronize()
         start_time = time.time()
         with torch.no_grad():
