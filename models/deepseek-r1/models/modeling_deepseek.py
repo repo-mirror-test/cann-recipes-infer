@@ -2458,7 +2458,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
     def init_cache(
         self,
         input_ids,
-        num_hidden_layers: Optional[int] = None, 
+        num_hidden_layers: Optional[int] = None,
     ):
         batch_size, seq_len = input_ids.size()
         cache_seq_len = self.max_position_embeddings
@@ -2560,7 +2560,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
                 step_gap = self.config.n_routed_experts // self.moe_ep_size \
                             if expanded_tokens < self.config.n_routed_experts else 1
                 cur_topk_list_decode = [
-                    ((i + global_rank // step_gap * step_gap) * step_gap + 
+                    ((i + global_rank // step_gap * step_gap) * step_gap +
                     global_rank % step_gap) % self.config.n_routed_experts for i in range(expanded_tokens)
                 ]
                 cur_topk_list = torch.Tensor(cur_topk_list_decode).int().view(batch_size * seq_len, -1).npu()
@@ -2867,6 +2867,18 @@ class DeepseekV3ModelMTP(DeepseekV3ForCausalLM):
             prev_hidden_states = prev_hidden_states.view(1, -1, self.hidden_size)
         logits = self.forward_lm_head(outputs=outputs, position_ids=position_ids, is_prefill=is_prefill)
 
+        return logits, prev_hidden_states
+
+    def decode(
+        self,
+        **kwargs
+    ):
+        # Note: In graph modes(aclgraph, gegraph), the mtp model and target model requires calling different
+        # decode functions. Otherwise, recompiling is triggered."
+        logits, prev_hidden_states = self.forward(
+            is_prefill=False,
+            **kwargs
+        )
         return logits, prev_hidden_states
 
     # Adapted from vllm.model_executor.models.deepseek_mtp.DeepSeekMTP.load_weights
