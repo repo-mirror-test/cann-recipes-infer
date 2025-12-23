@@ -55,6 +55,14 @@ with superkernel_scope(switch, scope, options):
 ```
 其中`scope`表示当前融合范围的SuperKernel名称，`options`表示SuperKernel编译的自定义选项。关于scope和options的具体描述和使用范围请参考[SuperKernel文档](https://www.hiascend.com/document/detail/zh/Pytorch/710/modthirdparty/torchairuseguide/torchair_00035.html)。
 
+## Benchmark
+
+基于Atlas A3，本实践对DeepSeek-R1 W8A8C8 量化版本进行了性能Benchmark测试。
+|Quant Mode| Global Batch Size | Seq Length | Chips | TPOT (ms) | Throughput (tokens/p/s) |
+|-------| ----------------- | ---------- | ----- | --------- | ----------------------- |
+|W8A8C8 |    6144           | 4096       | 128   | 44.9      |2138                     |
+
+> 注：性能数据基于 MTP1 与 perfect eplb 配置采集，平均 1 个 draft token 中 accept token 为 0.7 个。
 ---
 ## 附录
 [环境部署以及样例执行](../../../models/deepseek-r1/README.md)

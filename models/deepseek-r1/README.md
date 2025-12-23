@@ -121,7 +121,15 @@ source ${cann_path}/bin/setenv.bash
 
 - 本样例prefill阶段采用的详细优化点介绍可参见[基于Atlas A3集群的DeepSeek-R1模型prefill阶段推理性能优化实践](../../docs/models/deepseek-r1/deepseek_r1_prefill_optimization.md)。
 
-- 本样例decode阶段采用的详细优化点介绍可参见[基于Atlas A3集群的DeepSeek-R1模型decode阶段推理性能优化](../../docs/models/deepseek-r1/deepseek_r1_decode_optimization.md)。
+- 本样例decode阶段采用的详细优化点介绍及性能Benchmark可参见[基于Atlas A3集群的DeepSeek-R1模型decode阶段推理性能优化](../../docs/models/deepseek-r1/deepseek_r1_decode_optimization.md)。
+
+## Benchmark
+基于Atlas A3，本实践使用`config/decode_r1_rank_128_128ep_a8w8c8_mtp_benchmark.yaml`作为运行配置文件，对DeepSeek-R1 W8A8C8 量化版本进行了性能Benchmark测试。
+|Quant Mode| Global Batch Size | Seq Length | Chips | TPOT (ms) | Throughput (tokens/p/s) |
+|-------| ----------------- | ---------- | ----- | --------- | ----------------------- |
+|W8A8C8 |    6144           | 4096       | 128   | 44.9      |2138                     |
+
+> 注：性能数据基于 MTP1 与 perfect eplb 配置采集，平均 1 个 draft token 中 accept token 为 0.7 个。
 
 ## 附录
 
