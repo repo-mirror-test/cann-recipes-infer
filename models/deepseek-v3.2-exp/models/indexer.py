@@ -119,7 +119,7 @@ class Indexer(nn.Module):
         slot_mapping: torch.Tensor,
         block_table: Optional[torch.Tensor] = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
-        cp_input_dict: Optional[Dict] = None,
+        prefill_extra_input_dict: Optional[Dict] = None,
         c8_input_dict: Optional[Dict] = None,
         is_prefill: bool = True,
     ):
@@ -136,7 +136,7 @@ class Indexer(nn.Module):
             "slot_mapping": slot_mapping,
             "block_table": block_table,
             "actual_seq_lengths_q": actual_seq_lengths_q,
-            "cp_input_dict": cp_input_dict,
+            "prefill_extra_input_dict": prefill_extra_input_dict,
             "c8_input_dict": c8_input_dict,
             "is_prefill": is_prefill,
         }
@@ -165,7 +165,7 @@ class Indexer(nn.Module):
         slot_mapping: torch.Tensor,
         block_table: Optional[torch.Tensor] = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
-        cp_input_dict: Optional[Dict] = None,
+        prefill_extra_input_dict: Optional[Dict] = None,
         c8_input_dict: Optional[Dict] = None,
         is_prefill: bool = True,
     ):
@@ -231,7 +231,7 @@ class Indexer(nn.Module):
         slot_mapping: torch.Tensor,
         block_table: Optional[torch.Tensor] = None,
         actual_seq_lengths_q: Optional[torch.Tensor] = None,
-        cp_input_dict: Optional[Dict] = None,
+        prefill_extra_input_dict: Optional[Dict] = None,
         c8_input_dict: Optional[Dict] = None,
         is_prefill: bool = True,
     ):
@@ -289,9 +289,10 @@ class Indexer(nn.Module):
                 k_scale_all = key_dequant_scale.new_empty([bsz * seqlen * self.cp_size, key_dequant_scale.shape[-1]])
                 dist.all_gather_into_tensor(k_scale_all, key_dequant_scale.view(bsz * seqlen, -1), \
                                             group=self.hccl_comm_dict.get("cp_group", None))
-                outputs_k_scale_list = list(torch.split(k_scale_all, cp_input_dict["reverse_split_list"], dim=0))
+                outputs_k_scale_list = list(
+                    torch.split(k_scale_all, prefill_extra_input_dict["reverse_split_list"], dim=0))
                 key_dequant_scale = torch.cat([outputs_k_scale_list[i] \
-                                            for i in cp_input_dict["cp_reverse_index"]], dim=0)
+                                            for i in prefill_extra_input_dict["cp_reverse_index"]], dim=0)
                 query_dequant_scale_prev, query_dequant_scale_next = torch.split(query_dequant_scale, \
                 query_dequant_scale.size(1) // 2, dim=1)
                 query_dequant_scale_prev = query_dequant_scale_prev.reshape(-1, self.n_heads)
@@ -303,8 +304,14 @@ class Indexer(nn.Module):
 
             if past_key_scales_indexer is not None:
                 past_key_scales = past_key_scales_indexer[self.layer_idx][0]
-                # for long seq input, should use npu_scatter_nd_update_
-                torch_npu.npu_scatter_nd_update_(past_key_scales.view(-1, 1),
+                if is_prefill:
+                    # scatter_update_ performs better in prefill stage
+                    torch_npu.scatter_update_(past_key_scales.view(kv_len.shape[0], -1, past_key_scales.shape[-1]),
+                                            prefill_extra_input_dict["kv_scatter_update_indices"],
+                                            key_dequant_scale.view(kv_len.shape[0], -1, key_dequant_scale.shape[-1]),
+                                            axis=1)
+                else:
+                    torch_npu.npu_scatter_nd_update_(past_key_scales.view(-1, 1),
                                                     slot_mapping.view(-1, 1),
                                                     key_dequant_scale.view(-1, key_dequant_scale.shape[-1]))
             indexer_input.update({"key_dequant_scale": past_key_scales,
@@ -314,12 +321,17 @@ class Indexer(nn.Module):
             kv_all = k.new_empty([bsz * seqlen * self.cp_size, k.shape[-1]])
             dist.all_gather_into_tensor(kv_all, k.view(bsz * seqlen, -1), \
                                     group=self.hccl_comm_dict.get("cp_group", None))
-            outputs_list = list(torch.split(kv_all, cp_input_dict["reverse_split_list"], dim=0))
-            k = torch.cat([outputs_list[i] for i in cp_input_dict["cp_reverse_index"]], dim=0)
+            outputs_list = list(torch.split(kv_all, prefill_extra_input_dict["reverse_split_list"], dim=0))
+            k = torch.cat([outputs_list[i] for i in prefill_extra_input_dict["cp_reverse_index"]], dim=0)
         if past_key_values_indexer is not None:
             past_key_states = past_key_values_indexer[self.layer_idx][0]
-            # for long seq input, should use npu_scatter_nd_update_
-            torch_npu.npu_scatter_nd_update_(past_key_states.view(-1, self.head_dim),
+            if is_prefill:
+                torch_npu.scatter_update_(past_key_states.view(kv_len.shape[0], -1, past_key_states.shape[-1]),
+                                        prefill_extra_input_dict["kv_scatter_update_indices"],
+                                        k.view(kv_len.shape[0], -1, k.shape[-1]),
+                                        axis=1)
+            else:
+                torch_npu.npu_scatter_nd_update_(past_key_states.view(-1, self.head_dim),
                                                 slot_mapping.view(-1, 1),
                                                 k.view(-1, k.shape[-1]))
         if is_prefill:
@@ -348,8 +360,8 @@ class Indexer(nn.Module):
                 "q": q_prev.view(bsz, -1, self.n_heads, q.shape[-1]),
                 "weights": weights_prev,
                 })
-            indexer_input.update({"actual_seq_lengths_kv": cp_input_dict["kv_len_prev"],
-                                    "actual_seq_lengths_query": cp_input_dict["actual_seq_q"]})
+            indexer_input.update({"actual_seq_lengths_kv": prefill_extra_input_dict["kv_len_prev"],
+                                    "actual_seq_lengths_query": prefill_extra_input_dict["actual_seq_q"]})
             if self.kv_cache_quant_mode == "int8":
                 indexer_input.update({"query_dequant_scale": c8_input_dict["query_dequant_scale_prev"]})
             topk_indices_prev = indexer_func(**indexer_input)
@@ -357,7 +369,7 @@ class Indexer(nn.Module):
                 "q": q_next.view(bsz, -1, self.n_heads, q.shape[-1]),
                 "weights": weights_next,
                 })
-            indexer_input.update({"actual_seq_lengths_kv": cp_input_dict["kv_len_next"]})
+            indexer_input.update({"actual_seq_lengths_kv": prefill_extra_input_dict["kv_len_next"]})
             if self.kv_cache_quant_mode == "int8":
                 indexer_input.update({"query_dequant_scale": c8_input_dict["query_dequant_scale_next"]})
             topk_indices_next = indexer_func(**indexer_input)
