@@ -106,13 +106,27 @@ def npu_wait_tensor(switch_flag: bool, out: torch.Tensor, wait_tensor: torch.Ten
     if switch_flag:
         out = tng.scope.npu_wait_tensor(out, wait_tensor)
     return out
-    
+
 
 def npu_stream_switch(switch_flag: bool, stream_tag: str, stream_priority: int = 0):
     if switch_flag:
         return tng.scope.npu_stream_switch(stream_tag, stream_priority)
     else:
         return FakeContextManager()
+
+
+def limit_core_num(switch_flag: bool, aic_num: str, aiv_num: str):
+    if switch_flag:
+        return tng.scope.limit_core_num(aic_num, aiv_num)
+    else:
+        return FakeContextManager()
+
+
+def npu_prefetch(switch_flag, weight, depend, size, offset=0):
+    if switch_flag:
+        return torch_npu.npu_prefetch(weight, depend, size, offset)
+    else:
+        return None
 
 
 def process_infer_time(infer_time_rec, token_count):
@@ -184,7 +198,7 @@ def detokenize_outputs(generate_ids_list, tokenizer, input_lens):
     else:
         logging.info("Inference decode result: \n%s", res_list)
     return res_list
-    
+
 
 def check_common_parallel_settings(world_size, runner_settings):
     if world_size <= 0:

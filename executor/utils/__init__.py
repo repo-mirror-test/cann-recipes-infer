@@ -11,11 +11,13 @@ __all__ = ["update_settings", "init_comm_group", "get_group_name", "get_default_
            "override", "get_init_attn_mask", "get_decode_mask", "npu_stream_switch", "npu_wait_tensor", "align_up",
            "superkernel_scope", "ceil_div", "process_infer_time", "build_dataset_input",
            "calc_moe_hccl_buffer_size", "MicroBatchMode", "remove_padding_left", "get_had_pow2",
-           "detokenize_outputs"]
+           "detokenize_outputs",
+           "limit_core_num", "npu_prefetch"]
 
 from .common_utils import (update_settings, override, get_init_attn_mask, get_decode_mask,
                            npu_stream_switch, npu_wait_tensor, align_up, read_yaml, superkernel_scope, ceil_div,
-                           process_infer_time, MicroBatchMode, remove_padding_left, get_had_pow2, detokenize_outputs
+                           process_infer_time, MicroBatchMode, remove_padding_left, get_had_pow2, detokenize_outputs,
+                           limit_core_num, npu_prefetch
                           )
 from .hccl_utils import init_comm_group, get_group_name, get_default_group, calc_moe_hccl_buffer_size
 from .data_utils import build_dataset_input
