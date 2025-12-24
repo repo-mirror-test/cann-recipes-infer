@@ -72,6 +72,7 @@ function check_env_vars()
     if [ "$WORLD_SIZE" -lt "$MA_NUM_GPUS" ]; then
         MA_NUM_GPUS=$WORLD_SIZE
     fi
+    export LOCAL_WORLD_SIZE=${MA_NUM_GPUS}
     export RANK_OFFSET=`expr $VC_TASK_INDEX \* ${MA_NUM_GPUS}`
 
     # check world size

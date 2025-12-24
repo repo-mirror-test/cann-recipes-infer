@@ -48,6 +48,9 @@ class Infer(nn.Module):
 
         self.enable_offload = runner_settings.get("model_config").get("enable_offload", False)
 
+        self.exe_mode = runner_settings.get("exe_mode", "ge_graph")
+        self.enable_cache_compile = runner_settings.get("model_config").get("enable_cache_compile", False)
+    
     def inference(self, model_runner, model_inputs, cycle_idx=None, is_prefill=False, warm_up=False, prefix=''):
         if not warm_up:
             self.logits_wp, self.prev_hidden_states_wp, self.inference_time_wp = None, None, None
@@ -64,7 +67,37 @@ class Infer(nn.Module):
             if is_prefill:
                 logits, prev_hidden_states = model_runner.model.prefill(**model_inputs)
             else:
-                logits, prev_hidden_states = model_runner.model.decode(**model_inputs)
+                if self.exe_mode == "acl_graph":
+                    # Reinplaces in-placeable custom operations.
+                    # TorchAir provides a map to update the reinplace custom ops.
+                    # For example below, mla_prolog_v3_funtional will be reinplaced
+                    # with mla_prolog_v3, which can get performance improvement.
+                    # [9, 10] is the mutated input arg index list.
+                    # 9 represents the index of "kv_cache" and 10 is the index of "kr_cache".Please refer to
+                    # https://gitcode.com/Ascend/op-plugin/blob/master/op_plugin/config/op_plugin_functions.yaml
+                    # to get the latest IR declaration.
+                    try:
+                        from torchair._acl_concrete_graph.graph_pass import (
+                            inplaceable_npu_ops,
+                            InplaceableNpuOp,
+                            check_multi_stream_for_multi_reinplace
+                        )
+                        inplaceable_npu_ops.update({
+                            torch.ops.custom.npu_mla_prolog_v3_functional.default:
+                                InplaceableNpuOp(
+                                    inplace_op=torch.ops.custom.npu_mla_prolog_v3.default,
+                                    mutated_arg=[9, 10], 
+                                    extra_check=check_multi_stream_for_multi_reinplace,
+                                ),
+                        })
+                    except ImportError:
+                        logging.warning(f"custom op reinplace needs to update torch_npu version 7.3.0")
+                # warm-up phase, compilation is required; subsequent runs will skip the guard check.        
+                if self.exe_mode == "acl_graph" and self.enable_cache_compile and not warm_up:
+                    with torch.compiler.set_stance(skip_guard_eval_unsafe=True):  
+                        logits, prev_hidden_states = model_runner.model.decode(**model_inputs)
+                else:
+                    logits, prev_hidden_states = model_runner.model.decode(**model_inputs)    
 
         torch.npu.synchronize()
         inference_time = time.time() - start_time

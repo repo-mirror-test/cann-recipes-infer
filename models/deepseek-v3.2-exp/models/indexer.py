@@ -66,8 +66,15 @@ class Indexer(nn.Module):
 
         self.enable_multi_streams = runner_settings.get("model_config").get("enable_multi_streams", False)
         self.enable_gegraph = runner_settings.get("exe_mode", "ge_graph") == "ge_graph"
+        self.enable_aclgraph = runner_settings.get("exe_mode", "ge_graph") == "acl_graph"
         self.enable_pypto = self.runner_settings.get("model_config").get("enable_pypto", False)
         self.pa_block_size = self.runner_settings.get("model_config").get("pa_block_size", 128)
+
+        self.npu_events = []
+        if self.enable_multi_streams and self.enable_aclgraph:
+            self.npu_events = [tng.ops.npu_create_tagged_event(
+                # 2 is number of events used for event synchronization
+                tag=f"indexer_layer_{layer_idx}_evt_{i}") for i in range(2)] 
 
         self.dim: int = config.hidden_size
         self.n_heads: int = config.index_n_heads
@@ -245,12 +252,21 @@ class Indexer(nn.Module):
         sin = sin.view(-1, 1, 1, self.rope_head_dim)
         enable_multi_streams = self.enable_multi_streams and not is_prefill
 
+        if enable_multi_streams and self.enable_aclgraph:
+            tng.ops.npu_tagged_event_record(self.npu_events[0])
         with npu_stream_switch(enable_multi_streams, "22"):
             # prolog for kv use multi streams
             if enable_multi_streams:
-                tng.scope.npu_wait_tensor(qr, query_states[0])
+                if self.enable_aclgraph:
+                    tng.ops.npu_tagged_event_wait(self.npu_events[0])
+                else:
+                    tng.scope.npu_wait_tensor(qr, query_states[0])
             # q process in new stream
             q_b = self.wq_b(qr, c8_input_dict.get("pertoken_scale", None)) # [b,s,1536] @ [1536,64*128] = [b,s,64*128]
+            
+            if enable_multi_streams and self.enable_aclgraph:
+                tng.ops.npu_tagged_event_record(self.npu_events[1])
+
             q = q_b.view(bsz, seqlen, self.n_heads, self.head_dim)  # [b,s,64,128]
             q_pe, q_nope = torch.split(q, [self.rope_head_dim, \
                                         self.head_dim - self.rope_head_dim], dim=-1)  # [b,s,64,64+64]
@@ -261,7 +277,10 @@ class Indexer(nn.Module):
             q = torch.cat([q_pe, q_nope], dim=-1)
         with npu_stream_switch(enable_multi_streams, "33"):
             if enable_multi_streams:
-                tng.scope.npu_wait_tensor(x, q_b)
+                if self.enable_aclgraph:
+                    tng.ops.npu_tagged_event_wait(self.npu_events[1])
+                else:
+                    tng.scope.npu_wait_tensor(x, q_b)
             weights = self.weights_proj(x.view(-1, self.dim))
 
         k_proj = self.wk(x)  # [b,s,7168] @ [7168,128] = [b,s,128]

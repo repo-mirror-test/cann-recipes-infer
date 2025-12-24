@@ -4,7 +4,7 @@ The configuration instructions in the YAML file can be found below.
 Basic Config
   model_name: "deepseek_v3.2_exp"                    # The model name. String type
   model_path: "/data/models/DeepSeek-V3.2-Exp-bf16/" # The model path. String type
-  exe_mode: "ge_graph"                              # The execution mode. Only support ["ge_graph", "eager"]
+  exe_mode: "ge_graph"                              # The execution mode. Only support ["ge_graph", "eager", "acl_graph"]
   world_size: 128                                   # The world size. Int type
 
 Model Config

@@ -59,7 +59,8 @@ class DeepSeekRunner(ModelRunner):
         self.prefill_cycles = 0
         self.query_id_list = []
         self.max_new_tokens = runner_settings.get("data_config").get("max_new_tokens", 32)
-
+        self.enable_static_kernel = self.runner_settings.get("model_config").get("enable_static_kernel", False)
+    
     @override
     def init_model(self, is_mtp=False):
         self.is_mtp = is_mtp
@@ -137,6 +138,14 @@ class DeepSeekRunner(ModelRunner):
             from torchair.configs.compiler_config import CompilerConfig
 
             compiler_config = CompilerConfig()
+            if self.execute_mode == "acl_graph":
+                compiler_config.mode = "reduce-overhead"
+                # TODO there is perfomance issue when setting clone_input=True, will be fixed in 2026 Q1.
+                # Need to remove the config once torch_npu released at that time.
+                if hasattr(compiler_config.debug.aclgraph, "clone_input"):
+                    compiler_config.debug.aclgraph.clone_input = False 
+                if self.enable_static_kernel:
+                    compiler_config.experimental_config.aclgraph._aclnn_static_shape_kernel = True
             compiler_config.experimental_config.frozen_parameter = True
             compiler_config.experimental_config.tiling_schedule_optimize = True
             compiler_config.experimental_config.topology_sorting_strategy = "StableRDFS"

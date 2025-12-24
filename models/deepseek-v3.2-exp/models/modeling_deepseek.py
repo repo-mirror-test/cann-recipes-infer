@@ -214,11 +214,18 @@ class DeepseekV3MoE(nn.Module):
         self.moe_ep_size = self.runner_settings.get("parallel_config").get("moe_ep_size", 1)
         self.exe_mode = self.runner_settings.get("exe_mode", "eager")
         self.enable_multi_streams = runner_settings.get("model_config").get("enable_multi_streams", False)
+        self.enable_aclgraph = runner_settings.get("exe_mode", "ge_graph") == "acl_graph"
         self.perfect_eplb = self.runner_settings.get("model_config").get("perfect_eplb", False)
         self.num_experts_per_tok = config.num_experts_per_tok
         # total experts num
         self.num_experts = config.n_routed_experts
         self.top_k = config.num_experts_per_tok
+
+        self.npu_events = []
+        if self.enable_multi_streams and self.enable_aclgraph:
+            self.npu_events = [tng.ops.npu_create_tagged_event(
+                # 2 is number of events used for event synchronization
+                tag=f"moe_layer_{self.layer_idx}_evt_{i}") for i in range(2)] 
 
         self.intermediate_size_per_rank = self.intermediate_size // self.moe_tp_size
         self.shared_expert_rank_num = 0 # route and share on same card
@@ -414,15 +421,23 @@ class DeepseekV3MoE(nn.Module):
 
         if self.n_shared_experts > 0:
             enable_multi_streams = self.enable_multi_streams and not is_prefill
+            use_aclgraph_event = enable_multi_streams and self.enable_aclgraph
+            if use_aclgraph_event:
+                tng.ops.npu_tagged_event_record(self.npu_events[0])
             with npu_stream_switch(enable_multi_streams, "11"):
+                if use_aclgraph_event:
+                    tng.ops.npu_tagged_event_wait(self.npu_events[0])
                 # shared_expert use multi streams
                 hidden_states_share = self.shared_experts(hidden_states.view(-1, hidden_states.shape[-1]))
+                if use_aclgraph_event:
+                    tng.ops.npu_tagged_event_record(self.npu_events[1])
         else:
+            use_aclgraph_event = False
             hidden_states_share = None
 
         if self.moe_tp_size > 1:
             # MOE TP
-            return self.moe_infer_tp(hidden_states, topk_idx, topk_weight, hidden_states_share)
+            return self.moe_infer_tp(hidden_states, topk_idx, topk_weight, hidden_states_share, is_prefill)
         else:
             # MOE EP
             if is_prefill:
@@ -500,7 +515,7 @@ class DeepseekV3MoE(nn.Module):
         hidden_states = hidden_states.view(batch_size, sequence_length, h)
         return hidden_states
 
-    def moe_infer_tp(self, x, topk_ids, topk_weight, hidden_states_share):
+    def moe_infer_tp(self, x, topk_ids, topk_weight, hidden_states_share, is_prefill):
         batch_size, sequence_length, h = x.shape
         hidden_states = x.view(-1, h)
         routing_args = {
@@ -531,6 +546,10 @@ class DeepseekV3MoE(nn.Module):
                 "pertoken_scale": pertoken_scale
             })
         hidden_states_ordered_by_experts = self.experts(expanded_x, tokens_per_expert, **moe_args)
+        enable_multi_streams = self.enable_multi_streams and not is_prefill
+        use_aclgraph_event = enable_multi_streams and self.enable_aclgraph
+        if use_aclgraph_event:
+            tng.ops.npu_tagged_event_wait(self.npu_events[1])
         hidden_states = torch_npu.npu_moe_finalize_routing(
             hidden_states_ordered_by_experts,
             skip1=hidden_states_share.view(-1, h), skip2=None,
@@ -631,6 +650,11 @@ class DeepseekV3MoE(nn.Module):
             gmm_args.update({"pertoken_scale": dynamic_scale})
 
         hidden_states_ordered_by_experts = self.experts(**gmm_args)
+
+        # is_prefill is always false in this branch
+        use_aclgraph_event = self.enable_multi_streams and self.enable_aclgraph
+        if use_aclgraph_event:
+            tng.ops.npu_tagged_event_wait(self.npu_events[1])
 
         # moe combine
         combine_args = {
@@ -949,7 +973,8 @@ class DeepseekIndexerAttention(nn.Module):
         )
         # query_states is tuple(q_nope,q_pe) q_nope shape: [B,S,N,D]
         bsz, q_len, _, _ = query_states[0].shape
-        actual_seq_qlen = torch.tensor([q_len + i * q_len for i in range(bsz)], dtype=torch.int32).npu()
+        actual_seq_qlen = torch.arange(q_len, q_len * (bsz + 1), q_len,
+                                       dtype=torch.int32, device=query_states[0].device)
         if is_prefill:
             actual_seq_lengths_kv = torch.tensor([q_len for _ in range(bsz)], dtype=torch.int32).npu()
         attn_output = self.attn_func(
@@ -1742,6 +1767,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         self.enable_cache_compile = self.runner_settings.get("model_config").get("enable_cache_compile", False)
         self.kv_cache_quant_mode = config.quant_config.kv_cache_quant_mode \
             if config.quant_config is not None else "unquant"
+        self.enable_static_kernel = self.runner_settings.get("model_config").get("enable_static_kernel", False)
+        self.enable_aclgraph = runner_settings.get("exe_mode", "ge_graph") == "acl_graph"
 
         self.local_rank = int(os.getenv("LOCAL_RANK", "0"))
         self.rank_offset = int(os.getenv("RANK_OFFSET", "0"))
@@ -1850,9 +1877,22 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         cache_model = self.main_decode
         if self.is_mtp:
             cache_model = self.main_decode_mtp
-        cached_decode = tng.inference.cache_compile(cache_model, cache_dir=cache_dir, config=tng_config,
+        if not self.enable_aclgraph:
+            cached_decode = tng.inference.cache_compile(cache_model, cache_dir=cache_dir, config=tng_config,
                                                     dynamic=False, fullgraph=True, ge_cache=True)
-        return cached_decode
+            return cached_decode
+        else:
+            tng_config.mode = "reduce-overhead"
+            # TODO there is perfomance issue when setting clone_input=True， will be fixed in 2026 Q1.
+            # Need to remove the config once torch_npu released at that time.
+            if hasattr(tng_config.debug.aclgraph, "clone_input"):
+                tng_config.debug.aclgraph.clone_input = False
+            if self.enable_static_kernel:                        
+                tng_config.experimental_config.aclgraph._aclnn_static_shape_kernel = True 
+            torch._dynamo.config.inline_inbuilt_nn_modules = False
+            npu_backend = tng.get_npu_backend(compiler_config=tng_config)
+            cached_decode = torch.compile(cache_model, dynamic=False, fullgraph=True, backend=npu_backend)
+            return cached_decode
 
     def init_parallel_comm_group(self):
         world_size = dist.get_world_size()

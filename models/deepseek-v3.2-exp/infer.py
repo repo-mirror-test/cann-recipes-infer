@@ -122,7 +122,7 @@ def check_model_settings(world_size, runner_settings):
     next_n = runner_settings.get("model_config").get("next_n", 0)
     prefill_mini_batch_size = runner_settings.get("model_config").get("prefill_mini_batch_size", 0)
 
-    if exe_mode not in ["ge_graph", "eager"]:
+    if exe_mode not in ["ge_graph", "eager", "acl_graph"]:
         raise ValueError(f"{exe_mode=} does not supported!")
 
     dynamo_feat = (enable_cache_compile or enable_multi_streams or enable_superkernel)
