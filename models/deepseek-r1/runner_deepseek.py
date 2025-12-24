@@ -287,7 +287,7 @@ class DeepSeekRunner(ModelRunner):
         return model_inputs
 
     @override
-    def model_inference(self, model_inputs, is_prefill=False, warm_up=False):
+    def model_inference(self, model_inputs, is_prefill=False, warm_up=False, prefix=''):
         dist.barrier()  # barrier all ranks to avoid performance jitter caused by asynchrony among ranks
         torch.npu.synchronize()
         start_time = time.time()
@@ -303,8 +303,10 @@ class DeepSeekRunner(ModelRunner):
         torch.npu.synchronize()
         end_time = time.time()
         inference_time = end_time - start_time
+        warm_up_prefix = "[warm up] " if warm_up else ""
         inference_stage = "prefill" if is_prefill else "decode"
-        logging.info(f"{self.model_name} inference time cost of {inference_stage} is {(inference_time)*1000:.2f} ms")
+        logging.info(f"{prefix} {self.model_name} {warm_up_prefix}inference time cost of \
+                     {inference_stage} is {(inference_time)*1000:.2f} ms")
         return (logits, inference_time, prev_hidden_states)
 
     @override

@@ -56,7 +56,8 @@ class InferMTP(nn.Module):
                 # main model
                 model_inputs = self.main_model.model_input_prepare(input_dict_main)
                 outputs = self.main_model.model_inference(model_inputs,
-                                                          is_prefill=input_dict_main['is_prefill'], warm_up=warm_up)
+                                                          is_prefill=input_dict_main['is_prefill'], warm_up=warm_up,
+                                                          prefix='[MainModel]')
                 # The outputs is a tuple containing logits, inference_time and prev_hidden_states.
                 logits, infer_time_main, prev_hidden_states = outputs
                 step_time += infer_time_main
@@ -77,7 +78,8 @@ class InferMTP(nn.Module):
 
                     model_inputs = self.mtp_model.model_input_prepare(input_dict_mtp)
                     outputs = self.mtp_model.model_inference(model_inputs,
-                                                            is_prefill=input_dict_mtp['is_prefill'], warm_up=warm_up)
+                                                             is_prefill=input_dict_mtp['is_prefill'], warm_up=warm_up,
+                                                             prefix='[MTP]')
                     # The outputs is a tuple containing logits, inference_time and prev_hidden_states.
                     logits, infer_time_spec, prev_hidden_states = outputs
 
@@ -304,10 +306,16 @@ class InferMTP(nn.Module):
 
     def obtain_mtp_stats(self, total_accepted_num, cnt, infer_time_rec):
         avg_accpeted_num = torch.mean(total_accepted_num)
-        logging.info("Finish inference, cnt is %d, average accepted num per batch is %d", cnt, avg_accpeted_num)
+        logging.info(f"Finish inference, number of loop step is {cnt}, "
+                     f"draft token per batch is {cnt}*{self.next_n}, "
+                     f"average accepted num per batch is {avg_accpeted_num}")
 
         total_tokens = total_accepted_num + cnt
-        avg_infer_time = process_infer_time(infer_time_rec, total_tokens[0]) # logging for the first batch
+        equivalent_infer_time = process_infer_time(infer_time_rec, total_tokens[0]) # logging for the first batch
+        avg_infer_time = process_infer_time(infer_time_rec, len(infer_time_rec)) # logging for the first batch
         logging.info(f"{self.main_model.model_name} average inference time cost is {(avg_infer_time)*1000:.2f} ms")
+        logging.info(
+            f"{self.main_model.model_name} model average equivalent latency of MTP{self.next_n}"
+            f" is {(equivalent_infer_time)*1000:.2f} ms")
 
         return avg_infer_time

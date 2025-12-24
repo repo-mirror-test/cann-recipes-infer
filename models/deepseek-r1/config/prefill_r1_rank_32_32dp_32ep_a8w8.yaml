@@ -20,7 +20,7 @@ model_config:
   micro_batch_mode: 1         # [0, 1]
 
 data_config:
-  dataset: "LongBench"                # ["default", "LongBench"]
+  dataset: "LongBench"                # ["default", "LongBench", "InfiniteBench"]
   input_max_len: 4096
   max_new_tokens: 10
   batch_size: 64

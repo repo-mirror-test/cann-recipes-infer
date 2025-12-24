@@ -19,7 +19,7 @@ model_config:
   moe_chunk_max_len: 65536
 
 data_config:
-  dataset: "default"                # ["default", "LongBench"]
+  dataset: "default"                # ["default", "LongBench", "InfiniteBench"]
   input_max_len: 32
   max_new_tokens: 32
   batch_size: 128

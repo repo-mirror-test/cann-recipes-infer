@@ -20,7 +20,7 @@ model_config:
   enable_superkernel: False         # [False, True]
 
 data_config:
-  dataset: "LongBench"                # ["default", "LongBench"]
+  dataset: "LongBench"                # ["default", "LongBench", "InfiniteBench"]
   input_max_len: 4000
   max_new_tokens: 32
   batch_size: 512

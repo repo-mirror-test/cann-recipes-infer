@@ -25,7 +25,7 @@ Model Config
   micro_batch_mode: 0               # Whether enable prefill microbatch. Support [0, 1]. 0: Close prefill microbatch, 1: Open prefill microbatch
 
 Data Config
-  dataset: "default"  # Support ["default", "LongBench"]
+  dataset: "default"  # Support ["default", "LongBench", "InfiniteBench"]
   input_max_len: 8192 # The input max length 
   max_new_tokens: 100 # The max new tokens
   batch_size: 128     # The global batch size
