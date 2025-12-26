@@ -1153,7 +1153,7 @@ class DeepseekAttention(nn.Module):
                 past_key_value=past_key_value, slot_mapping=slot_mapping,
                 cp_input_dict=cp_input_dict)
 
-        bsz = actual_seq_lengths_kv.shape[0]
+        bsz = kv_len.shape[0]
         query_states = (q_nope.view(bsz, -1, self.num_heads_per_rank, self.kv_lora_rank), \
                     q_pe.view(bsz, -1, self.num_heads_per_rank, self.qk_rope_head_dim))  # 1,B*S,N,D -> B,S,N,D
 
@@ -1197,8 +1197,8 @@ class DeepseekAttention(nn.Module):
             "num_heads": self.num_heads_per_rank,
             "num_key_value_heads": self.num_key_value_heads_per_rank,
             "input_layout": "TND_NTD",
-            "actual_seq_lengths": actual_seq_qlen.to(torch.int64),
-            "actual_seq_lengths_kv": actual_seq_lengths_kv.to(torch.int64),
+            "actual_seq_lengths": actual_seq_qlen,
+            "actual_seq_lengths_kv": actual_seq_lengths_kv,
             "sparse_mode": 3,
             "atten_mask": attention_mask,
             "block_table": block_table,
@@ -1783,9 +1783,10 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
 
         kv_len = torch.ceil(kv_len / (self.cp_size * 2)).to(torch.int64)
         kv_len_prev = kv_len * (self.global_rank + 1)
-        cp_input_dict.update({"kv_len_prev": kv_len_prev})
+        # convert kv_len to list to optimize npu async time in prefill FA 
+        cp_input_dict.update({"kv_len_prev": kv_len_prev.tolist()})
         kv_len_next = kv_len * (self.cp_size * 2 - self.global_rank)
-        cp_input_dict.update({"kv_len_next": kv_len_next, "actual_seq_q": kv_len.cumsum(dim=-1)})
+        cp_input_dict.update({"kv_len_next": kv_len_next.tolist(), "actual_seq_q": kv_len.cumsum(dim=-1).tolist()})
 
         cp_tmpkv_cache_num_block = (batch_size * seq_len // self.cp_size +
                                     self.block_size) // self.block_size
@@ -1988,14 +1989,20 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         is_prefill=True
     ):
         if is_prefill:
-            actual_seq_lengths_kv = torch.cumsum(kv_len, dim=0)
+            actual_seq_lengths_kv = torch.cumsum(kv_len, dim=0).tolist()
         else:
+            # Adjust format based on execution mode (GE graph use original kv_len directly else convert to list)
             if seq_len > 1:
                 last_kv = torch.max(kv_len, axis=1)[0]
-                actual_seq_lengths_kv = last_kv
+                if self.runner_settings.get("exe_mode") == "ge_graph":
+                    actual_seq_lengths_kv = last_kv
+                else:
+                    actual_seq_lengths_kv = last_kv.detach().tolist()
             else:
-                actual_seq_lengths_kv = kv_len
-        actual_seq_lengths_kv = actual_seq_lengths_kv.to(torch.int32)
+                if self.runner_settings.get("exe_mode") == "ge_graph":
+                    actual_seq_lengths_kv = kv_len
+                else:
+                    actual_seq_lengths_kv = kv_len.detach().tolist()
         return actual_seq_lengths_kv
 
     def prepare_inputs_for_generation(
@@ -2027,10 +2034,10 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel):
         attention_mask = get_init_attn_mask(2048, kv_len.device)
         actual_seq_lengths_q = None
         if is_prefill:
-            actual_seq_lengths_q = torch.tensor(actual_seq_lengths_kv, dtype=torch.int32).npu()
+            actual_seq_lengths_q = actual_seq_lengths_kv
         else:
             actual_seq_lengths_q = torch.tensor([seq_len + i * seq_len for i in range(batch_size)],
-                                                dtype=torch.int32).npu()
+                                                dtype=torch.int64, device="npu")
 
         slot_mapping = self.get_slot_mapping(kv_len_withpad if is_prefill else position_ids.to(kv_len.dtype),
                                              is_prefill, input_ids.device)
